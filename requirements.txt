@@ -1,0 +1,7 @@
+httpx
+pandas
+numpy
+geopandas
+shapely
+pydantic
+psycopg
