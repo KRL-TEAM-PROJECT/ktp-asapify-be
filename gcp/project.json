@@ -1,0 +1,10 @@
+{
+  "project_id": "hack2skill-510921",
+  "project_number": "950889990251",
+  "region": "asia-southeast2",
+  "firestore_database": "asapify",
+  "api_service": "asapify-api",
+  "notification_service": "asapify-notify",
+  "notification_mode": "dry_run",
+  "source": "User-provided GCP console screenshot, 2026-10-09. Firebase enablement/billing/IAM not yet verified."
+}

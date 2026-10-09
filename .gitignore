@@ -1,3 +1,14 @@
 tmp
 *.pyc
 */__pycache__/
+
+# Local runtime and credentials
+.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+!.env.example
+gcp/config.local.json
+gcp/.state/
