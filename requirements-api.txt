@@ -1,0 +1,6 @@
+fastapi==0.143.0
+uvicorn==0.54.0
+firebase-admin==7.7.0
+google-cloud-firestore==2.34.0
+google-cloud-storage==3.16.0
+httpx[socks]==0.28.1

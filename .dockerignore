@@ -1,0 +1,7 @@
+*
+!requirements-api.txt
+!main.py
+!asapify_api/
+!asapify_api/**
+**/__pycache__/
+**/*.pyc
