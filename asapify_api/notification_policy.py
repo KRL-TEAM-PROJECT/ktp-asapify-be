@@ -13,7 +13,6 @@ from .core import PROVINCES, as_time, iso
 Channel = Literal['telegram', 'fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh']
 CHANNELS = ('telegram', 'fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh')
 FUTURE = {'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh'}
-MAX_RECIPIENTS = 40  # <= 401 writes including inbox, jobs, decision and audit.
 CONSENT_VERSION = 'notification-v1-2026-10-09'
 
 

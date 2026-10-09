@@ -19,11 +19,11 @@ Status paket: kode dan pengujian lokal; **belum deploy atau mengirim ke penerima
 | WhatsApp, SMS, Gmail | Pilihan tersimpan dan kontrak routing; adapter **belum diimplementasikan** |
 | LoRa / LoRaWAN, Bluetooth Mesh | Pilihan/desain saja; belum ada driver, gateway, atau perangkat |
 | Offline | Frontend menyimpan shell publik dan inbox yang dipilih pengguna; tanpa pesan baru saat terputus |
-| Penggunaan publik massal | Belum; pilot maksimal 40 pelanggan aktif per provinsi |
+| Penggunaan publik massal | Belum diuji beban; fan-out per halaman 50 pelanggan, tanpa batas jumlah |
 
-Batas 40 sengaja menahan satu transaksi di bawah batas operasi Firestore. Melampaui batas menghasilkan
-`FANOUT_LIMIT` sebelum keputusan disimpan; tidak diam-diam mengabaikan pelanggan. Untuk skala publik,
-pindahkan fanout ke cursor/pagination dan event outbox terpisah, lalu uji beban sebelum membuka pendaftaran luas.
+Jumlah pelanggan tidak pernah menggagalkan keputusan. Fan-out berjalan setelah keputusan tersimpan,
+50 pelanggan per batch (≤ 400 tulisan, di bawah batas 500 Firestore), di dalam request publikasi.
+Untuk ribuan pelanggan per provinsi, pindahkan fan-out ke worker dan uji beban dulu (timeout Cloud Run 60 detik).
 
 **Koreksi rancangan FCM:** dokumentasi Google melarang FCM untuk emergency/high-risk use cases.
 Karena itu semua publikasi AWAS operasional diberi `purpose=emergency` oleh server dan diblokir untuk
@@ -33,10 +33,13 @@ penerima harus menyetujui simulasi. Jangan mengubah replay untuk menyamarkan per
 
 ## Alur dan jaminan
 
-1. Operator memilih Publikasikan setelah verifikasi. Transaksi Firestore membaca pelanggan yang setuju,
-   lalu menyimpan keputusan, audit, alert, inbox dan semua job kanal sekaligus. Tidak ada provider call di transaksi.
-2. API mencoba enqueue. Gagal enqueue tidak menghilangkan keputusan; respons `queue.awaiting_recovery`.
-   Scheduler memindai outbox `pending` dan mencoba lagi. Nama task menggunakan hash dan generation.
+1. Operator memilih Publikasikan setelah verifikasi. Transaksi Firestore menyimpan keputusan, audit dan
+   alert (`fanout: pending`) sekaligus. Sesudah commit, API menulis inbox dan job kanal pelanggan yang setuju,
+   per halaman. ID deterministik dan hanya `create`, sehingga diulang atau berjalan bersamaan tidak menggandakan
+   pesan dan tidak mereset job yang sudah diklaim. Tidak ada provider call di transaksi.
+2. API mencoba enqueue. Gagal fan-out atau enqueue tidak menghilangkan keputusan; respons `queue.awaiting_recovery`.
+   Scheduler melanjutkan alert `fanout: pending`, memindai outbox `pending` dan mencoba lagi.
+   Nama task menggunakan hash dan generation.
 3. Cloud Tasks memanggil worker privat menggunakan OIDC service account yang tepat. Header nama task
    sendiri tidak memberi akses. UID, chat ID dan token perangkat tidak dimasukkan ke task.
 4. Transaksi worker mengklaim satu job, memeriksa persetujuan terkini, wilayah, expiry, dan acknowledgement.
@@ -131,7 +134,7 @@ Set `FCM_ENABLED=true` pada API + worker hanya untuk uji simulasi/non-darurat. K
 - Firebase token nyata: penerima dapat membuka inbox sendiri, tetapi operator endpoint tetap ditolak.
 - Firestore transaksi konkuren dan index: dua operator menerbitkan cluster sama hanya sekali.
 - Dua Cloud Tasks job yang sama: satu klaim; matikan worker setelah klaim untuk memeriksa unknown.
-- Cabut persetujuan/ack sebelum job due, pastikan pembatalan; uji expiry dan 40/41 pelanggan.
+- Cabut persetujuan/ack sebelum job due, pastikan pembatalan; uji expiry dan fan-out > 50 pelanggan (lebih dari satu halaman), termasuk API mati di tengah fan-out lalu sweep melanjutkan.
 - Telegram ke akun demo terverifikasi dan push simulasi ke browser yang mengizinkan. Catat waktu
   published_at, started_at, finished_at, acknowledged_at; jangan menyebut accepted sebagai latency ke ponsel.
 - Uji ponsel di daerah sasaran; SMS/WA belum bisa dibandingkan sebelum adapter/provider tersedia.

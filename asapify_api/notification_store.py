@@ -5,12 +5,14 @@ import secrets
 from datetime import timedelta
 from functools import lru_cache
 
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from .core import ApiProblem, as_time, iso, utc_now
-from .notification_policy import (CONSENT_VERSION, MAX_RECIPIENTS, Preferences, alert_payload,
-                                  dispatch_guard, key, plan_recipient)
+from .notification_policy import CONSENT_VERSION, Preferences, dispatch_guard, key, plan_recipient
+
+FANOUT_PAGE = 50  # <= 50 x (1 inbox + 7 jobs) = 400 writes, under the 500-write batch limit.
 
 
 class NotificationStore:
@@ -88,26 +90,69 @@ class NotificationStore:
             return True
         return link(self.db.transaction())
 
-    def prepare_publication(self, tx, cluster, caption, now):
-        """All query reads happen before the caller's writes in the same decision transaction."""
-        recipients = list(self.db.collection('notification_recipients').where(
-            filter=FieldFilter('provinces', 'array_contains', str(cluster['province']))).where(filter=FieldFilter('consent', '==', True)).limit(MAX_RECIPIENTS + 1).stream(transaction=tx))
-        if len(recipients) > MAX_RECIPIENTS:
-            raise ApiProblem(503, 'FANOUT_LIMIT', 'Batas pilot 40 pelanggan per provinsi tercapai; perlu fanout bertahap.')
-        alert = alert_payload(cluster, caption, now)
-        inboxes, jobs = [], []
-        for snapshot in recipients:
-            inbox, planned = plan_recipient(alert, snapshot.to_dict(), now)
-            if inbox:
-                inboxes.append(inbox)
-                jobs.extend(planned)
-        return inboxes, jobs
+    def fan_out(self, alert_id):
+        """Write inbox + channel jobs for every consenting recipient, page by page, after the decision commits.
 
-    def write_publication(self, tx, inboxes, jobs):
-        for inbox in inboxes:
-            tx.create(self.db.collection('notification_inbox').document(inbox['id']), inbox)
-        for job in jobs:
-            tx.create(self.db.collection('notification_jobs').document(job['id']), job)
+        The subscriber count never blocks a decision. IDs are deterministic and documents are only
+        created, so a resumed or concurrent run skips what exists and never resets a claimed job.
+        """
+        alert_ref = self.db.collection('alerts').document(alert_id)
+        alert = alert_ref.get().to_dict()
+        payload = {'id': alert['id'], 'cluster_id': alert['cluster_id'], 'province': str(alert['province']),
+                   'text': alert['caption_id'], 'purpose': alert['purpose'], 'published_at': alert['published_at'],
+                   'expires_at': alert['expires_at'], 'status': alert['status']}
+        query = self.db.collection('notification_recipients').where(
+            filter=FieldFilter('provinces', 'array_contains', payload['province'])).where(
+            filter=FieldFilter('consent', '==', True)).order_by('__name__').limit(FANOUT_PAGE)
+        recipients = jobs = 0
+        last = None
+        while True:
+            page = list((query.start_after(last) if last else query).stream())
+            docs = []
+            for snapshot in page:
+                inbox, planned = plan_recipient(payload, snapshot.to_dict(), payload['published_at'])
+                if inbox:
+                    recipients, jobs = recipients + 1, jobs + len(planned)
+                    docs.append(('notification_inbox', inbox))
+                    docs.extend(('notification_jobs', job) for job in planned)
+            self._create_missing(docs)
+            if len(page) < FANOUT_PAGE:
+                break
+            last = page[-1]
+        summary = {'state': 'outbox_saved' if recipients else 'no_recipients', 'recipients': recipients, 'jobs': jobs}
+        batch = self.db.batch()
+        batch.update(alert_ref, {'fanout': 'done', 'notifications': summary})
+        batch.update(self.db.collection('clusters').document(alert['cluster_id']), {'decision.notifications': summary})
+        batch.commit()
+        return summary
+
+    def _create_missing(self, docs, attempts=3):
+        for _ in range(attempts):
+            refs = [self.db.collection(kind).document(doc['id']) for kind, doc in docs]
+            existing = {s.reference.path for s in self.db.get_all(refs) if s.exists} if refs else set()
+            missing = [(ref, doc) for ref, (_, doc) in zip(refs, docs) if ref.path not in existing]
+            if not missing:
+                return
+            batch = self.db.batch()
+            for ref, doc in missing:
+                batch.create(ref, doc)
+            try:
+                batch.commit()
+                return
+            except AlreadyExists:
+                continue  # A concurrent run wrote part of this page; read again.
+        raise ApiProblem(503, 'FANOUT_CONFLICT', 'Penulisan inbox bertabrakan; sweep akan melanjutkan.')
+
+    def resume_fanouts(self, limit=20):
+        """Finish publications whose fan-out stopped after the decision was saved."""
+        done = 0
+        for snapshot in self.db.collection('alerts').where(filter=FieldFilter('fanout', '==', 'pending')).limit(limit).stream():
+            try:
+                self.fan_out(snapshot.id)
+                done += 1
+            except Exception:
+                continue  # Retried on the next sweep; one bad alert must not block the others.
+        return done
 
     def inbox(self, uid):
         # Composite index is checked in under gcp/firestore.indexes.json.
