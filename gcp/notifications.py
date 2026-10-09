@@ -43,7 +43,8 @@ class NotificationsDeploy(Deploy):
             raise ValueError('Public origin must be an HTTPS origin without path/query/credentials.')
         env = ','.join([f'GOOGLE_CLOUD_PROJECT={self.project}', 'FIRESTORE_DATABASE=asapify',
                         f'ASAPIFY_DATA_BUCKET={self.data.removeprefix("gs://")}',
-                        'NOTIFICATION_MODE=dry_run', 'FCM_ENABLED=false', f'ASAPIFY_PUBLIC_ORIGIN={public_origin.rstrip("/")}',
+                        'NOTIFICATION_MODE=dry_run', 'FCM_ENABLED=false', 'TELEGRAM_ENABLED=false',
+                        f'ASAPIFY_VERSION={version}', f'ASAPIFY_PUBLIC_ORIGIN={public_origin.rstrip("/")}',
                         f'NOTIFICATION_TASK_CALLER={self.caller}'])
         self.run('run', 'deploy', 'asapify-notify', f'--image={self.image(version)}', f'--region={self.region}',
                  f'--service-account={self.worker}', '--no-allow-unauthenticated', '--port=8080',

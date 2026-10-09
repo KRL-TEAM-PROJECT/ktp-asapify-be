@@ -12,6 +12,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 
 APIS = ["run.googleapis.com", "cloudbuild.googleapis.com", "artifactregistry.googleapis.com",
         "firestore.googleapis.com", "storage.googleapis.com", "secretmanager.googleapis.com",
@@ -39,7 +40,12 @@ class Deploy:
         print(shlex.join(command), flush=True)
         if not self.apply:
             return None
-        result = subprocess.run(command, check=True, capture_output=read, text=True)
+        try:
+            result = subprocess.run(command, check=True, capture_output=read, text=True)
+        except subprocess.CalledProcessError as error:
+            if read and error.stderr:
+                print(error.stderr, file=sys.stderr, end="")
+            raise
         return json.loads(result.stdout) if read else None
 
     def preflight(self):
@@ -106,6 +112,7 @@ class Deploy:
                  "--update-env-vars=" + ",".join([
                      f"GOOGLE_CLOUD_PROJECT={self.project}", "FIRESTORE_DATABASE=asapify",
                      f"ASAPIFY_DATA_BUCKET={self.data.removeprefix('gs://')}",
+                     "NOTIFICATION_MODE=dry_run", "FCM_ENABLED=false",
                      "TELEGRAM_ENABLED=false", f"ASAPIFY_VERSION={version}"]))
         self.run("run", "services", "describe", "asapify-api", f"--region={self.region}", read=True)
 

@@ -3,6 +3,9 @@
 Panduan ini untuk project khusus ASAPify yang sudah aktif dan terhubung billing.
 Tidak ada deployment cloud yang telah dijalankan dalam pembuatan perubahan ini.
 
+Untuk menjalankan tahapan sekaligus melalui akun Cloud Shell pengguna, lihat
+[runner Cloud Shell](CLOUDSHELL.md). Runner menyediakan plan, deploy backend, deploy Hosting, dan smoke checks.
+
 ## Yang disiapkan
 
 | Resource | Konfigurasi |
