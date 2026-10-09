@@ -115,25 +115,24 @@ class HimawariSource:
         return np.asarray(xm, float) / self._h, np.asarray(ym, float) / self._h
 
 
+if __name__ == "__main__":
+    # Cek manual peat cell: `python himawari.py` dari folder pipeline/. Tidak jalan saat modul di-import.
+    import geopandas as gpd
+    import matplotlib.pyplot as plt
 
-import geopandas as gpd
-from pycontrails.datalib.himawari import Himawari
+    from peat_mask import build_cells, peat_fraction
 
-from peat_mask import build_cells, peat_fraction
+    # koordinat x/y statis, jadi satu band cukup (lebih ringan diunduh)
+    scene = Himawari(region="F", bands=("B13",)).get("2026-09-28T17:00:00")
 
-# koordinat x/y statis, jadi satu band cukup (lebih ringan diunduh)
-scene = Himawari(region="F", bands=("B13",)).get("2026-09-28T17:00:00")
+    cells = build_cells(scene, bbox=(108.0, -4.5, 119.5, 7.5))
+    peat = gpd.read_file("assets/SUMBER DAYA ALAM DAN LINGKUNGAN - Peta Kesatuan Hidrologis Gambut.shp")   # ganti path-nya
+    peat_cells = peat_fraction(cells, peat, min_fraction=0.5)
 
-cells = build_cells(scene, bbox=(108.0, -4.5, 119.5, 7.5))
-peat = gpd.read_file("assets/SUMBER DAYA ALAM DAN LINGKUNGAN - Peta Kesatuan Hidrologis Gambut.shp")   # ganti path-nya
-peat_cells = peat_fraction(cells, peat, min_fraction=0.5)
+    print(len(cells), "piksel di bbox ->", len(peat_cells), "cell gambut")
+    print(peat_cells["peat_fraction"].describe())
 
-print(len(cells), "piksel di bbox ->", len(peat_cells), "cell gambut")
-print(peat_cells["peat_fraction"].describe())
-
-import matplotlib.pyplot as plt
-
-fig, ax = plt.subplots(figsize=(8, 8))
-peat.to_crs(4326).plot(ax=ax, color="lightgrey")
-peat_cells.sample(min(500, len(peat_cells))).plot(ax=ax, color="red")
-fig.savefig("cek_peat_cells.png", dpi=150)
+    fig, ax = plt.subplots(figsize=(8, 8))
+    peat.to_crs(4326).plot(ax=ax, color="lightgrey")
+    peat_cells.sample(min(500, len(peat_cells))).plot(ax=ax, color="red")
+    fig.savefig("cek_peat_cells.png", dpi=150)
