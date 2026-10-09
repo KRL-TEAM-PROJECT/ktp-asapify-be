@@ -176,9 +176,11 @@ def decision(cluster_id: str, body: DecisionInput, actor=Depends(require_operato
     check_decidable(current, body)
     result, _ = repo.decide(cluster_id, body, actor)
     if body.action == "publish":
-        # Cloud Tasks cannot join a Firestore transaction. Scheduler recovers persisted jobs.
+        # Fan-out and Cloud Tasks run after the decision commits. The Scheduler sweep resumes both.
         try:
-            count = enqueue_pending(get_notification_store(), get_tasks())
+            store = get_notification_store()
+            result["notifications"] = store.fan_out(result["alert_id"])
+            count = enqueue_pending(store, get_tasks())
             result["queue"] = {"state": "accepted", "count": count}
         except Exception:
             result["queue"] = {"state": "awaiting_recovery", "count": 0}

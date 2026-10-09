@@ -1,5 +1,6 @@
 import base64
 import copy
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -173,17 +174,21 @@ def test_consecutive_decisions_reserve_and_enqueue_only_once(monkeypatch):
     repo = FakeRepo()
     calls = []
     monkeypatch.setattr(module, "get_tasks", lambda: object())
-    monkeypatch.setattr(module, "get_notification_store", lambda: object())
+    store = Mock()
+    store.fan_out.return_value = {"state": "outbox_saved", "recipients": 41, "jobs": 41}
+    monkeypatch.setattr(module, "get_notification_store", lambda: store)
     def enqueue(*args):
-        assert repo.saves == 1
+        assert repo.saves == 1 and store.fan_out.call_count == 1  # recipients exist before tasks are queued
         calls.append(1)
         return 1
     monkeypatch.setattr(module, "enqueue_pending", enqueue)
     c = client(repo, True)
     body = {"action": "publish", "caption_id": "AWAS; belum terkonfirmasi"}
-    assert c.post("/api/v1/operator/clusters/test/decision", json=body).status_code == 201
+    r = c.post("/api/v1/operator/clusters/test/decision", json=body)
+    assert r.status_code == 201 and r.json()["notifications"]["recipients"] == 41
     assert c.post("/api/v1/operator/clusters/test/decision", json=body).status_code == 409
     assert len(calls) == 1
+    store.fan_out.assert_called_once_with("A-1008-test")
 
 
 def test_telegram_timeout_is_unknown_and_is_not_retried(monkeypatch):

@@ -256,12 +256,150 @@ def test_claim_transaction_cancels_after_ack_and_reserves_once(monkeypatch):
     assert job['status'] == 'cancelled' and job['error'] == 'ACKNOWLEDGED'
 
 
-def test_fanout_limit_fails_before_any_write():
+class FakeSnap:
+    def __init__(self, ref, data):
+        self.reference, self.id, self._data = ref, ref.id, data
+
+    @property
+    def exists(self):
+        return self._data is not None
+
+    def to_dict(self):
+        return copy.deepcopy(self._data)
+
+
+class FakeRef:
+    def __init__(self, db, kind, doc_id):
+        self.db, self.id, self.path = db, doc_id, f'{kind}/{doc_id}'
+
+    def get(self, **kw):
+        return FakeSnap(self, self.db.docs.get(self.path))
+
+
+class FakeQuery:
+    """Only what fan-out uses: where (== / array_contains), order by id, limit, start_after, stream."""
+    def __init__(self, db, kind, filters=(), size=None, after=None):
+        self.db, self.kind, self.filters, self.size, self.after = db, kind, filters, size, after
+
+    def document(self, doc_id):
+        return FakeRef(self.db, self.kind, doc_id)
+
+    def where(self, filter):
+        return FakeQuery(self.db, self.kind, self.filters + (filter,), self.size, self.after)
+
+    def order_by(self, field):
+        return self
+
+    def limit(self, size):
+        return FakeQuery(self.db, self.kind, self.filters, size, self.after)
+
+    def start_after(self, snapshot):
+        return FakeQuery(self.db, self.kind, self.filters, self.size, snapshot.id)
+
+    def stream(self):
+        prefix = self.kind + '/'
+        rows = sorted((p[len(prefix):], d) for p, d in self.db.docs.items() if p.startswith(prefix))
+        for f in self.filters:
+            match = (lambda d, f=f: f.value in d.get(f.field_path, [])) if f.op_string == 'array_contains' \
+                else (lambda d, f=f: d.get(f.field_path) == f.value)
+            rows = [(i, d) for i, d in rows if match(d)]
+        rows = [(i, d) for i, d in rows if self.after is None or i > self.after][:self.size]
+        return [FakeSnap(self.document(i), d) for i, d in rows]
+
+
+class FakeBatch:
+    def __init__(self, db):
+        self.db, self.ops = db, []
+
+    def create(self, ref, data):
+        self.ops.append(('create', ref, data))
+
+    def update(self, ref, fields):
+        self.ops.append(('update', ref, fields))
+
+    def commit(self):
+        from google.api_core.exceptions import AlreadyExists
+        if any(op == 'create' and ref.path in self.db.docs for op, ref, _ in self.ops):
+            raise AlreadyExists('document exists')
+        for op, ref, data in self.ops:
+            if op == 'create':
+                self.db.docs[ref.path] = copy.deepcopy(data)
+                continue
+            for field, value in data.items():
+                target, *parts = self.db.docs[ref.path], *field.split('.')
+                for part in parts[:-1]:
+                    target = target.setdefault(part, {})
+                target[parts[-1]] = value
+
+
+class FakeDB:
+    def __init__(self):
+        self.docs, self.stale_reads = {}, 0
+
+    def collection(self, kind):
+        return FakeQuery(self, kind)
+
+    def get_all(self, refs):
+        if self.stale_reads:  # Simulates a concurrent run that wrote after this read.
+            self.stale_reads -= 1
+            return [FakeSnap(r, None) for r in refs]
+        return [r.get() for r in refs]
+
+    def batch(self):
+        return FakeBatch(self)
+
+
+def fanout_db(subscribers):
+    db = FakeDB()
+    db.docs['alerts/A-test'] = {'id': 'A-test', 'cluster_id': 'C-test', 'province': '62', 'caption_id': '<b>AWAS</b>',
+                                'purpose': 'emergency', 'published_at': NOW, 'expires_at': '2026-10-09T00:00:00Z',
+                                'status': 'active', 'fanout': 'pending'}
+    db.docs['clusters/C-test'] = {'id': 'C-test', 'decision': {'action': 'publish', 'notifications': {'state': 'fanout_pending'}}}
+    subscriber = {'provinces': ['62'], 'consent': True, 'channels': ['telegram']}
+    for i in range(subscribers):
+        db.docs[f'notification_recipients/r{i:03}'] = {**subscriber, 'uid': f'u{i}', 'telegram_chat_id': str(i)}
+    db.docs['notification_recipients/z-other'] = {**subscriber, 'uid': 'other', 'provinces': ['11']}
+    db.docs['notification_recipients/z-off'] = {**subscriber, 'uid': 'off', 'consent': False}
+    return db
+
+
+def count(db, kind):
+    return sum(p.startswith(kind + '/') for p in db.docs)
+
+
+def test_fanout_has_no_subscriber_cap_and_reaches_everyone_in_pages():
     from asapify_api.notification_store import NotificationStore
-    db = Mock(); query = db.collection.return_value.where.return_value.where.return_value.limit.return_value
-    query.stream.return_value = [Mock() for _ in range(41)]
-    tx = Mock()
-    with pytest.raises(ApiProblem) as exc:
-        NotificationStore(db).prepare_publication(tx, CLUSTER, 'SIMULASI', NOW)
-    assert exc.value.code == 'FANOUT_LIMIT'
-    assert tx.method_calls == []
+    db = fanout_db(120)
+    summary = NotificationStore(db).fan_out('A-test')
+    assert summary == {'state': 'outbox_saved', 'recipients': 120, 'jobs': 120}
+    assert count(db, 'notification_inbox') == 120 and count(db, 'notification_jobs') == 120
+    assert db.docs['alerts/A-test']['fanout'] == 'done'
+    assert db.docs['clusters/C-test']['decision']['notifications'] == summary
+
+
+def test_resumed_fanout_skips_existing_and_never_resets_a_claimed_job():
+    from asapify_api.notification_store import NotificationStore
+    db = fanout_db(60)
+    store = NotificationStore(db)
+    store.fan_out('A-test')
+    claimed = next(p for p in db.docs if p.startswith('notification_jobs/'))
+    db.docs[claimed]['status'] = 'sending'
+    db.docs['alerts/A-test']['fanout'] = 'pending'  # e.g. the API died before marking it done
+    assert store.resume_fanouts() == 1
+    assert db.docs[claimed]['status'] == 'sending'
+    assert count(db, 'notification_jobs') == 60 and db.docs['alerts/A-test']['fanout'] == 'done'
+
+
+def test_concurrent_fanout_conflict_is_retried_without_duplicates():
+    from asapify_api.notification_store import NotificationStore
+    db = fanout_db(3)
+    store = NotificationStore(db)
+    store.fan_out('A-test')
+    db.stale_reads = 1  # first read misses documents another run already created
+    assert store.fan_out('A-test')['recipients'] == 3
+    assert count(db, 'notification_inbox') == 3
+
+
+def test_no_subscribers_is_reported_not_failed():
+    from asapify_api.notification_store import NotificationStore
+    assert NotificationStore(fanout_db(0)).fan_out('A-test') == {'state': 'no_recipients', 'recipients': 0, 'jobs': 0}

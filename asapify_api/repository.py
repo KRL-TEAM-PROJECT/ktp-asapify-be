@@ -10,7 +10,7 @@ from google.cloud import firestore, storage
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from .core import ApiProblem, DecisionInput, check_decidable, iso, utc_now
-from .notification_store import NotificationStore
+from .notification_policy import alert_payload
 
 
 class CloudRepository:
@@ -85,7 +85,7 @@ class CloudRepository:
                     "reason": request.reason.strip() if request.action == "reject" else None,
                     "alert_id": alert_id if request.action == "publish" else None,
                     "telegram": None,
-                    "notifications": {"state": "outbox_saved", "recipients": 0, "jobs": 0} if request.action == "publish" else None}
+                    "notifications": {"state": "fanout_pending", "recipients": 0, "jobs": 0} if request.action == "publish" else None}
 
         @firestore.transactional
         def save(transaction):
@@ -94,23 +94,20 @@ class CloudRepository:
                 raise ApiProblem(404, "NOT_FOUND", "Kelompok tidak ditemukan.")
             cluster = snap.to_dict()
             check_decidable(cluster, request)
-            notifier = NotificationStore(self.db)
-            inboxes, jobs = notifier.prepare_publication(transaction, cluster, request.caption_id, now) if request.action == "publish" else ([], [])
-            if request.action == "publish":
-                decision["notifications"] = {"state": "outbox_saved" if inboxes else "no_recipients",
-                                             "recipients": len(inboxes), "jobs": len(jobs)}
-            # Decision, outbox and audit are atomic. Concurrent clicks produce exactly one reservation.
+            # Decision, audit and alert are atomic. Concurrent clicks produce exactly one reservation.
+            # Recipients are written afterwards (NotificationStore.fan_out) so their number never blocks this.
             transaction.update(ref, {"decision": decision})
             transaction.create(self.db.collection("audit_log").document(), {
                 "cluster_id": cluster_id, "operator_uid": actor["uid"], **decision})
             if request.action == "publish":
+                alert = alert_payload(cluster, request.caption_id, now)
                 transaction.create(self.db.collection("alerts").document(alert_id), {
                     "id": alert_id, "cluster_id": cluster_id, "province": cluster["province"],
                     "caption_id": request.caption_id, "published_by": actor["email"],
                     "published_at": now, "status": "active", "closed_at": None, "closed_by": None,
                     "telegram": None, "notifications": decision["notifications"],
+                    "purpose": alert["purpose"], "expires_at": alert["expires_at"], "fanout": "pending",
                 })
-            notifier.write_publication(transaction, inboxes, jobs)
             return cluster
 
         cluster = save(self.db.transaction())

@@ -29,7 +29,7 @@ def public_profile(profile):
 @router.get('/api/v1/notifications/settings')
 def settings(actor=Depends(require_user), store=Depends(get_notification_store)):
     return {'preferences': public_profile(store.profile(actor['uid'])), 'channels': capabilities(),
-            'mode': os.getenv('NOTIFICATION_MODE', 'dry_run'), 'pilot_limit_per_province': 40}
+            'mode': os.getenv('NOTIFICATION_MODE', 'dry_run')}
 
 
 @router.put('/api/v1/notifications/preferences')
@@ -119,4 +119,5 @@ def dispatch(body: Dispatch, store=Depends(get_notification_store)):
 @router.post('/_internal/notifications/sweep', dependencies=[Depends(require_worker)])
 def sweep(store=Depends(get_notification_store), tasks=Depends(get_tasks)):
     store.reconcile_uncertain()
-    return {'enqueued': enqueue_pending(store, tasks)}
+    resumed = store.resume_fanouts()
+    return {'resumed': resumed, 'enqueued': enqueue_pending(store, tasks)}
