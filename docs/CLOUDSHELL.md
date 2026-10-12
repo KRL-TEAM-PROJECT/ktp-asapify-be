@@ -4,11 +4,14 @@ Target tetap: project `hack2skill-510921`, region Jakarta `asia-southeast2`, dat
 Runner mengerjakan API, worker, antrean, indeks dan recovery scheduler. Notifikasi tetap `dry_run`;
 Telegram dan FCM dinonaktifkan. Pipeline satelit/AI belum diimplementasikan oleh deployment ini.
 
-## Status percobaan 9 Oktober 2026
+## Status 12 Oktober 2026
 
-Deployment belum dijalankan ke GCP. Lingkungan agen tidak mempunyai Google Cloud CLI atau Application
-Default Credentials, dan konsol project dua kali menampilkan `Site Unavailable`. Tidak ada resource GCP
-yang diubah. Runner diperiksa secara lokal; hasil lokal bukan bukti layanan cloud sudah berjalan.
+- 9 Okt: Fitroh menjalankan tahap `backend` dan menyiapkan Hosting. API, worker, antrean, tiga indeks
+  dan jadwal sweep aktif. FE di-deploy lewat GitHub Actions repo FE (lihat `docs/GCP.md` repo FE).
+- 12 Okt: image API dan worker diganti ke `main` `c55a14c` (tag `fix-20261012-113615`) dengan cara
+  "Update image saja" di bawah. Mode tetap `dry_run`; Telegram dan FCM tetap mati.
+- Belum: rules Firestore belum pernah di-release, Secret Manager kosong (bot Telegram belum dipasang),
+  dan bucket data masih kosong sehingga peta live menampilkan `DATA_NOT_READY`.
 
 ## 1. Buka Cloud Shell dan ambil source
 
@@ -23,14 +26,12 @@ Jangan menaruh token GitHub, kode login, password, atau service-account key ke c
 Jalankan dari direktori baru agar checkout pekerjaan yang sudah ada tidak tertimpa:
 
 ```bash
-git clone --branch codex/notification-engine-v1 --single-branch https://github.com/KRL-TEAM-PROJECT/ktp-asapify-be.git
-git clone --branch codex/notification-engine-v1 --single-branch https://github.com/KRL-TEAM-PROJECT/ktp-asapify-fe.git
+git clone https://github.com/KRL-TEAM-PROJECT/ktp-asapify-be.git
+git clone https://github.com/KRL-TEAM-PROJECT/ktp-asapify-fe.git
 cd ktp-asapify-be
 ```
 
-Source aplikasi awal berasal dari BE `c0305126ba2d6072c8299fa35d7e15d2dd75e9a1` dan FE
-`bed1e941c5f08198ac000de2236d8ffefb807ca9`. Runner ini ditambahkan pada commit berikutnya dalam PR backend #1.
-PR tidak harus di-merge untuk menjalankan branch ini. Catat `git rev-parse HEAD` di kedua checkout sebelum deploy.
+Deploy hanya dari `main` yang sudah di-review. Catat `git rev-parse HEAD` di kedua checkout sebelum deploy.
 
 ## 2. Deploy backend
 
@@ -52,6 +53,50 @@ Backend tetap privat pada lapisan IAM sampai tahap Hosting. Pemeriksaan memakai 
 pendek di memori, bukan key JSON atau token yang dicetak. Akun deploy perlu izin memanggil layanan tersebut.
 Resource yang berhasil dibuat tetap ada jika langkah berikutnya gagal; tidak ada rollback destruktif otomatis.
 Setelah masalah diperbaiki, runner dapat dijalankan ulang. Gunakan `--version TAG_UNIK` jika ingin menetapkan tag.
+
+**Menjalankan ulang tahap ini pada project yang sudah live** butuh peran Owner (langkah izin IAM), menutup lagi
+akses publik API (`--no-allow-unauthenticated`) sehingga tahap `hosting` harus dijalankan ulang, dan
+mengembalikan mode ke `dry_run`. Untuk sekadar memperbarui kode, pakai cara di bawah.
+
+### Update image saja (cukup peran Editor)
+
+Build dari `main` lalu ganti image pada kedua layanan. Env, akun layanan, izin, akses publik API, worker
+privat dan jadwal tidak berubah.
+
+```bash
+P=hack2skill-510921; R=asia-southeast2; TAG="fix-$(date -u +%Y%m%d-%H%M%S)"
+IMG="$R-docker.pkg.dev/$P/asapify/api:$TAG"
+gcloud builds submit . --project=$P --region=$R --tag="$IMG" \
+  --service-account="projects/$P/serviceAccounts/asapify-build@$P.iam.gserviceaccount.com" \
+  --gcs-source-staging-dir="gs://$P-asapify-builds/source" --gcs-log-dir="gs://$P-asapify-builds/logs"
+for s in asapify-api asapify-notify; do
+  gcloud run services update $s --project=$P --region=$R --image="$IMG" --update-env-vars="ASAPIFY_VERSION=$TAG"
+done
+curl -s https://hack2skill-510921.web.app/api/v1/health   # version harus sama dengan $TAG
+```
+
+Rollback: jalankan `gcloud run services update` yang sama dengan tag image sebelumnya.
+
+### Deploy otomatis (GitHub Actions)
+
+`.github/workflows/deploy-backend.yml` menjalankan cara "Update image saja" di atas setiap kali `main`
+berubah pada `asapify_api/`, `main.py`, `Dockerfile` atau `requirements-api.txt` (juga bisa manual lewat
+`workflow_dispatch`). Urutannya: test → build dan push image `gh-<sha7>` → ganti image kedua layanan →
+uji asap lewat Hosting (versi health = tag baru, endpoint operator tanpa token = 401) → bila gagal,
+kembali otomatis ke image sebelumnya. Env, mode `dry_run`/`live`, izin dan jadwal tidak disentuh.
+
+Sebelum pertama kali berjalan, Owner menjalankan sekali dari Cloud Shell (cetak rencana dulu):
+
+```bash
+bash gcp/github-deployer.sh
+APPLY=1 bash gcp/github-deployer.sh
+```
+
+Skrip itu membuat akun `asapify-be-deployer` tanpa file kunci, menambahkan repo BE ke penyedia OIDC
+GitHub yang sudah dipakai FE, dan memberi akun itu hak push ke repositori image `asapify` serta hak
+update hanya pada `asapify-api` dan `asapify-notify`. Karena `main` langsung live, aktifkan branch
+protection: perubahan lewat PR dan test wajib lulus. Pasang juga kebijakan simpan image di Artifact
+Registry, karena setiap deploy menambah satu image.
 
 ## 3. Siapkan Firebase dan deploy Hosting
 

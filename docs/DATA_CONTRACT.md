@@ -47,7 +47,9 @@ menjadi bundle JSON harus ditambahkan oleh tim pipeline.
 - `clusters/<id>`: ClusterDetail terkini + awas_nights + observation_at.
 - `clusters/<id>/history/<slot>`: timestamp dan cluster lengkap untuk pembacaan `as_of`.
 - `alerts/<id>`: keputusan publish dan status delivery; `audit_log/<auto-id>`: siapa memutuskan dan kapan.
-- `tg_chats/<province>`: alert_chat_id, dibuat admin setelah memverifikasi grup tujuan.
+- `notification_recipients`, `notification_inbox`, `notification_jobs`, `notification_devices`,
+  `notification_telegram_chats`: langganan, inbox, job kirim, token push, dan tautan DM Telegram.
+  Ditulis hanya oleh API/worker; lihat [NOTIFICATIONS.md](NOTIFICATIONS.md). Grup Telegram per provinsi tidak dipakai.
 
 Publisher tidak menimpa keputusan operator dan tidak mengganti current cluster dengan snapshot lebih lama.
 Riwayat harus mencakup perubahan yang ingin dilihat saat replay. Snapshot keputusan di antara dua slot,

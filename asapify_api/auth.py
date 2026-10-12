@@ -23,7 +23,7 @@ def firebase_app():
 
 def require_user(authorization: str | None = Header(default=None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
-        raise ApiProblem(401, "UNAUTHENTICATED", "Silakan masuk sebagai operator.")
+        raise ApiProblem(401, "UNAUTHENTICATED", "Silakan masuk dengan akun Google.")
     token = authorization[7:]
     try:
         claims = auth.verify_id_token(token, app=firebase_app(), check_revoked=True)

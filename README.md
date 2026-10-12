@@ -10,7 +10,7 @@ Cloud Tasks OIDC, Firestore outbox, acknowledgement dan recovery. Mode bawaan dr
 Lihat [rincian implementasi dan aktivasi](docs/NOTIFICATIONS.md). WhatsApp, SMS, Gmail, LoRa dan Bluetooth
 masih tahap berikutnya; tidak ditampilkan sebagai pengiriman berhasil. Google Chat tidak digunakan.
 
-## Status integrasi 9 Oktober 2026
+## Status integrasi 12 Oktober 2026
 
 | Komponen | Status pada perubahan ini |
 |---|---|
@@ -18,11 +18,11 @@ masih tahap berikutnya; tidak ditampilkan sebagai pengiriman berhasil. Google Ch
 | Autentikasi | Firebase ID token, email terverifikasi, custom claim `role=operator`; revocation diperiksa |
 | Keputusan operator | Transaksi Firestore: keputusan, reservasi alert, audit; keputusan kedua ditolak |
 | Telegram | Adapter teks dalam Notification Engine; linking DM, dry_run default, status accepted/unknown |
-| Cloud Run + GCS + Firestore + Artifact Registry | Dockerfile dan rencana/perintah setup tersedia; belum dijalankan ke project pengguna |
+| Cloud Run + GCS + Firestore + Artifact Registry | Live di `hack2skill-510921` sejak 9 Okt; image `main` di-deploy ulang 12 Okt (lihat [CLOUDSHELL.md](docs/CLOUDSHELL.md)). Rules Firestore belum di-release; bucket data masih kosong |
 | Pipeline Himawari/GK2A, baseline, MAUT, kalibrasi | Kode `pipeline/` lama tetap eksperimen; belum terhubung ke API baru |
 | Agen ADK/Gemini | Scaffold lama tetap; `/verify` mengembalikan 503 yang jelas, bukan hasil AI palsu |
 | Daftar/penutupan alert | Belum diimplementasikan; endpoint 503, belum dipakai UI saat ini |
-| Uji cloud dengan Firebase/Firestore/Telegram nyata | Memerlukan Project ID, konfigurasi dan kredensial; belum dilakukan |
+| Uji cloud dengan Firebase/Firestore/Telegram nyata | Login Google, preferensi dan inbox terbukti di live; 401/403 dan worker privat terverifikasi. Publish, Telegram dan alur operator belum diuji (belum ada data, bot belum dipasang) |
 
 Kontrak FE 6 Oktober mencakup **Sumatra + Kalimantan**, origin grid `[94.9, 6.2]`, langkah 0,02°,
 54 slot malam (20.00–04.50 WIB). Ini lebih baru daripada WORKLOG 29 September yang hanya Kalimantan
