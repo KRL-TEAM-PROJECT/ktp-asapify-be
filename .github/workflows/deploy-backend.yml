@@ -1,0 +1,112 @@
+name: Deploy ASAPify Backend
+
+# Every merge to main that touches the API image is tested, built and rolled out to both Cloud Run
+# services. Only the image changes: env vars (dry_run/live), service accounts, IAM, the queue and the
+# sweep schedule stay as configured in GCP. Infrastructure changes still go through gcp/cloudshell.py.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'asapify_api/**'
+      - 'main.py'
+      - 'Dockerfile'
+      - 'requirements-api.txt'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: hack2skill-510921
+  REGION: asia-southeast2
+  IMAGE: asia-southeast2-docker.pkg.dev/hack2skill-510921/asapify/api
+  SERVICES: asapify-api asapify-notify
+  SITE: https://hack2skill-510921.web.app
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements-api.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/950889990251/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: asapify-be-deployer@hack2skill-510921.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push image
+        run: |
+          TAG="gh-${GITHUB_SHA::7}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          gcloud auth configure-docker asia-southeast2-docker.pkg.dev --quiet
+          docker build -t "$IMAGE:$TAG" .
+          docker push "$IMAGE:$TAG"
+
+      - name: Remember the running image
+        run: |
+          PREV=$(gcloud run services describe asapify-api --project="$PROJECT_ID" --region="$REGION" \
+            --format='value(spec.template.spec.containers[0].image)')
+          echo "PREV=$PREV" >> "$GITHUB_ENV"
+          echo "Running before deploy: $PREV"
+
+      - name: Swap the image on both services
+        run: |
+          for s in $SERVICES; do
+            gcloud run services update "$s" --project="$PROJECT_ID" --region="$REGION" --quiet \
+              --image="$IMAGE:$TAG" --update-env-vars="ASAPIFY_VERSION=$TAG"
+          done
+
+      - name: Smoke test through Hosting
+        run: |
+          version=""
+          for attempt in 1 2 3 4 5 6; do
+            version=$(curl -s "$SITE/api/v1/health" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' || true)
+            [ "$version" = "$TAG" ] && break
+            sleep 10
+          done
+          echo "health version: $version"
+          test "$version" = "$TAG"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/api/v1/operator/pixels")
+          echo "operator without token: $code"
+          test "$code" = 401
+
+      - name: Roll back to the previous image
+        if: failure() && env.PREV != ''
+        run: |
+          for s in $SERVICES; do
+            gcloud run services update "$s" --project="$PROJECT_ID" --region="$REGION" --quiet \
+              --image="$PREV" --update-env-vars="ASAPIFY_VERSION=${PREV##*:}"
+          done

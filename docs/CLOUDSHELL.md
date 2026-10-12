@@ -77,6 +77,27 @@ curl -s https://hack2skill-510921.web.app/api/v1/health   # version harus sama d
 
 Rollback: jalankan `gcloud run services update` yang sama dengan tag image sebelumnya.
 
+### Deploy otomatis (GitHub Actions)
+
+`.github/workflows/deploy-backend.yml` menjalankan cara "Update image saja" di atas setiap kali `main`
+berubah pada `asapify_api/`, `main.py`, `Dockerfile` atau `requirements-api.txt` (juga bisa manual lewat
+`workflow_dispatch`). Urutannya: test → build dan push image `gh-<sha7>` → ganti image kedua layanan →
+uji asap lewat Hosting (versi health = tag baru, endpoint operator tanpa token = 401) → bila gagal,
+kembali otomatis ke image sebelumnya. Env, mode `dry_run`/`live`, izin dan jadwal tidak disentuh.
+
+Sebelum pertama kali berjalan, Owner menjalankan sekali dari Cloud Shell (cetak rencana dulu):
+
+```bash
+bash gcp/github-deployer.sh
+APPLY=1 bash gcp/github-deployer.sh
+```
+
+Skrip itu membuat akun `asapify-be-deployer` tanpa file kunci, menambahkan repo BE ke penyedia OIDC
+GitHub yang sudah dipakai FE, dan memberi akun itu hak push ke repositori image `asapify` serta hak
+update hanya pada `asapify-api` dan `asapify-notify`. Karena `main` langsung live, aktifkan branch
+protection: perubahan lewat PR dan test wajib lulus. Pasang juga kebijakan simpan image di Artifact
+Registry, karena setiap deploy menambah satu image.
+
 ## 3. Siapkan Firebase dan deploy Hosting
 
 Tambahkan Firebase ke **project yang sama**, daftarkan Web App, aktifkan provider Google dan tambahkan
