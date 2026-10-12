@@ -1,6 +1,6 @@
-"""Rule engine deterministik. Pure functions: tanpa I/O, tanpa AI, gampang di-unit-test.
+"""Deterministic rule engine. Pure functions: no I/O, no AI, easy to unit-test.
 
-Semua angka di RuleConfig adalah HIPOTESIS awal, belum tervalidasi. Kalibrasi lewat backtest."""
+Every number in RuleConfig is an initial HYPOTHESIS, not validated. Calibrate through backtests."""
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -9,10 +9,10 @@ from typing import Callable
 
 import numpy as np
 
-from config import WIB
+from config import UTC_PLUS_7
 from models import CellState, Status, ThermalObs
 
-MAD_SCALE = 1.4826  # membuat MAD sebanding dengan std untuk data normal
+MAD_SCALE = 1.4826  # makes MAD comparable to the std for normal data
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class RuleConfig:
     z_watch: float = 2.5
     z_trigger: float = 4.0
     night_streak_trigger: int = 3
-    max_night_gap_days: int = 2       # celah antar malam valid yang masih dianggap "berurutan"
+    max_night_gap_days: int = 2       # gap between valid nights still counted as "consecutive"
     min_baseline_samples: int = 30
     window_days: int = 7
     cooldown: timedelta = timedelta(hours=24)
@@ -29,22 +29,22 @@ class RuleConfig:
 def robust_z(value: float, baseline: list[float], cfg: RuleConfig) -> float | None:
     b = np.asarray([x for x in baseline if x is not None], dtype=float)
     if b.size < cfg.min_baseline_samples:
-        return None                    # baseline belum cukup: jangan menilai
+        return None                    # baseline too short: do not score
     med = float(np.median(b))
     mad = float(np.median(np.abs(b - med))) * MAD_SCALE
     if mad < 1e-6:
-        return None                    # baseline datar: z tidak bermakna
+        return None                    # flat baseline: z is meaningless
     return (value - med) / mad
 
 
 def night_key(ts: datetime) -> date:
-    """Satu 'malam' (mis. 18:00-06:00 WIB) dikunci ke tanggal sore harinya."""
-    return (ts.astimezone(WIB) - timedelta(hours=12)).date()
+    """One 'night' (e.g. 18:00-06:00 UTC+7) is keyed to the date of its evening."""
+    return (ts.astimezone(UTC_PLUS_7) - timedelta(hours=12)).date()
 
 
 def night_streak(nightly: dict[date, float], z_watch: float, max_gap_days: int) -> int:
-    """Hitung malam valid berurutan dengan skor >= z_watch, dari yang terbaru.
-    Malam tanpa observasi valid (awan) TIDAK ada di `nightly`, jadi dilewati, bukan memutus."""
+    """Count consecutive valid nights with score >= z_watch, newest first.
+    Nights without a valid observation (cloud) are NOT in `nightly`, so they are skipped, not a break."""
     streak, prev = 0, None
     for d in sorted(nightly, reverse=True):
         if prev is not None and (prev - d).days > max_gap_days:
@@ -59,7 +59,7 @@ def night_streak(nightly: dict[date, float], z_watch: float, max_gap_days: int) 
 def evaluate_cell(
     cell_id: str,
     recent: list[ThermalObs],
-    baseline_fn: Callable[[datetime], list[float]],   # baseline per jam-hari & bulan untuk cell ini
+    baseline_fn: Callable[[datetime], list[float]],   # baseline per hour-of-day & month for this cell
     prev: CellState | None,
     now: datetime,
     cfg: RuleConfig = RuleConfig(),
@@ -97,7 +97,7 @@ def evaluate_cell(
 
 
 def should_trigger_agent(prev: CellState | None, new: CellState, now: datetime, cfg: RuleConfig = RuleConfig()) -> bool:
-    """Trigger berdasarkan TRANSISI + cooldown, bukan kondisi. Cegah fetch citra berulang."""
+    """Trigger on TRANSITION + cooldown, not on state. Prevents repeated imagery fetches."""
     if new.status is not Status.TRIGGERED:
         return False
     if prev is not None and prev.status is Status.TRIGGERED:

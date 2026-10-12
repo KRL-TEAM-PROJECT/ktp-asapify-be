@@ -7,19 +7,19 @@ from typing import Literal
 
 
 class Status(str, Enum):
-    NO_OBSERVATION = "no_observation"  # awan / gap data. BUKAN "aman"
+    NO_OBSERVATION = "no_observation"  # cloud / data gap. NOT "safe"
     NORMAL = "normal"
-    WATCH = "watch"          # threshold rendah: tampil di UI saja, citra belum dipanggil
+    WATCH = "watch"          # low threshold: shown in the UI only, no imagery requested
     TRIGGERED = "triggered"  # threshold tinggi / persisten: panggil agent
 
 
 @dataclass(frozen=True)
 class ThermalObs:
-    """Satu observasi termal per cell. `value` sengaja generik supaya rule engine
-    tidak terkunci ke keputusan LST vs brightness temperature (open item)."""
+    """One thermal observation per cell. `value` is deliberately generic so the rule engine
+    is not locked into the LST vs brightness temperature decision (open item)."""
     cell_id: str
     ts: datetime                 # UTC, tz-aware
-    value: float | None          # None = tidak ada observasi valid
+    value: float | None          # None = no valid observation
     kind: Literal["bt", "lst_minus_sat"]
     is_night: bool
 
@@ -31,5 +31,5 @@ class CellState:
     score: float | None          # robust z-score terbaru
     night_streak: int
     updated_at: datetime
-    baseline_frozen: bool = False    # True kalau cell sedang ter-flag: jangan masuk baseline
+    baseline_frozen: bool = False    # True while the cell is flagged: keep it out of the baseline
     last_agent_at: datetime | None = None
