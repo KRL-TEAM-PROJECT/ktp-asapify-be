@@ -1,61 +1,63 @@
-# Hasil pipeline → API operator
+# Pipeline output → operator API
 
-Kontrak frontend adalah `ktp-asapify-fe/src/types.ts` dan `src/contract/spec.ts`.
-API ini membaca hasil yang sudah dihitung, bukan menghitung deteksi. Kode eksperimen `pipeline/`
-belum menghasilkan kontrak ini. Tidak ada data observasi sintetis yang dipasang otomatis.
+The frontend contract is `ktp-asapify-fe/src/types.ts` and `src/contract/spec.ts`.
+This API reads results that are already computed; it does not run detection. The experimental
+`pipeline/` code does not produce this contract yet. No synthetic observation data is installed automatically.
 
-## Bundle yang diterima publisher
+## Bundle accepted by the publisher
 
-`tools/publish_snapshot.py` menerima satu berkas JSON berisi:
+`tools/publish_snapshot.py` accepts one JSON file containing:
 
-| Key | Bentuk |
+| Key | Shape |
 |---|---|
-| `index` | `PixelIndex`: version, origin `[94.9,6.2]`, step 0.02, rows/cols/province sejajar |
-| `grid` | `GridCompact`: pixels_version, slot UTC, n_sat, status, utility base64, clusters |
-| `meta` | archive_first YYYY-MM-DD, himawari_slot/gk2a_slot UTC atau null, replay boolean eksplisit |
+| `index` | `PixelIndex`: version, origin `[94.9,6.2]`, step 0.02, parallel rows/cols/province |
+| `grid` | `GridCompact`: pixels_version, UTC slot, n_sat, status, base64 utility, clusters |
+| `meta` | archive_first YYYY-MM-DD, himawari_slot/gk2a_slot UTC or null, explicit boolean replay |
 | `night` | `NightCompact`: night, pixels_version, 54 slots/status/n_sat, clusters |
-| `clusters` | Daftar `ClusterDetail`, ditambah `awas_nights` (daftar night_id) |
+| `clusters` | List of `ClusterDetail`, plus `warning_nights` (list of night ids) |
 
-`grid.pixel_n_sat` adalah tambahan daftar 0/1/2 per piksel yang diperlukan untuk GeoJSON.
-Format compact FE tetap bisa berjalan tanpanya. Jumlah satelit seluruh slot tidak boleh diklaim
-sebagai jumlah satelit cerah untuk setiap piksel.
+`grid.pixel_n_sat` is an extra 0/1/2 list per pixel needed for GeoJSON. The FE compact format works
+without it. The satellite count of a whole slot must never be claimed as the clear-sky satellite count of every pixel.
 
-Semua waktu berupa string `YYYY-MM-DDTHH:MM:SSZ`, urutan UTC. Semua angka dari sumber terukur.
-Status S/N/W/A; N selalu utility null (byte 255); nilai lain 0..250. PixelIndex.version harus cocok.
-Slot malam mengikuti FE: 13.00–21.50 UTC, 54 slot. Slot belum dievaluasi = null.
-`clusters` hanya berisi kelompok dari rule engine, dengan attributes, series, neighbours,
-verification sesuai tipe FE. `decision` harus null/absent dari pipeline; keputusan hanya ditulis API.
-Untuk replay, masukkan hasil backtest dan `meta.replay=true`; angka backtest bukan metrik validasi otomatis.
+All times are `YYYY-MM-DDTHH:MM:SSZ` strings, ordered in UTC. Every number comes from a measured source.
+Compact status codes: `S` = SAFE, `N` = NO_OBSERVATION, `W` = WATCH, `A` = WARNING. `N` always has a null
+utility (byte 255); other values are 0..250. PixelIndex.version must match.
+Night slots follow the FE: 13:00–21:50 UTC, 54 slots. Slots not evaluated yet are null.
+`clusters` holds only rule-engine clusters, with attributes, series, neighbours and verification as typed in the FE.
+All text fields are English (`caption`, `verification.summary`, `evidence[].finding`); there are no per-language variants.
+`decision` must be null/absent from the pipeline; only the API writes decisions.
+For replay, publish backtest output with `meta.replay=true`; backtest numbers are not automatic validation metrics.
+Alerts published from replay data are `exercise` messages and only reach subscribers who opted in to exercises.
 
 ```bash
-python tools/publish_snapshot.py /path/hasil_pipeline.json \
+python tools/publish_snapshot.py /path/pipeline_output.json \
   --project "$ASAPIFY_PROJECT_ID" --bucket "$ASAPIFY_PROJECT_ID-asapify-data"
-# Setelah review validasi, tambahkan --apply untuk menyimpan.
+# After reviewing the validation, add --apply to store it.
 ```
 
-Jalankan dengan ADC yang berwenang menulis GCS dan Firestore. Akun runtime API sengaja hanya dapat
-membaca bucket. Publisher ini adalah batas integrasi sementara; transformasi Parquet hasil ingest
-menjadi bundle JSON harus ditambahkan oleh tim pipeline.
+Run it with ADC allowed to write GCS and Firestore. The API runtime account can only read the bucket, by design.
+This publisher is a temporary integration boundary; converting ingested Parquet into the JSON bundle
+is for the pipeline team to add.
 
-## Penyimpanan
+## Storage
 
-- GCS `api/pixels/<sha256>.json`, `api/grid/<sha256>.json`, `api/nights/<sha256>.json`: object immutable
-  berdasarkan isi. Raw/Parquet/crops boleh tetap pada prefix rancangan tim; API tidak membacanya langsung.
+- GCS `api/pixels/<sha256>.json`, `api/grid/<sha256>.json`, `api/nights/<sha256>.json`: content-addressed,
+  immutable objects. Raw/Parquet/crops may stay under the team's planned prefixes; the API never reads them directly.
 - Firestore `api_snapshots/<slot>`: timestamp, n_sat, archive_first, replay, himawari_slot, gk2a_slot,
-  pixels_object, grid_object. Query satu field timestamp, tidak perlu composite index.
-- `api_nights/<night>`: night, month, has_data, awas_clusters, object, as_of.
-- `clusters/<id>`: ClusterDetail terkini + awas_nights + observation_at.
-- `clusters/<id>/history/<slot>`: timestamp dan cluster lengkap untuk pembacaan `as_of`.
-- `alerts/<id>`: keputusan publish dan status delivery; `audit_log/<auto-id>`: siapa memutuskan dan kapan.
+  pixels_object, grid_object. Queried on the single timestamp field; no composite index needed.
+- `api_nights/<night>`: night, month, has_data, warning_clusters, object, as_of.
+- `clusters/<id>`: current ClusterDetail + warning_nights + observation_at.
+- `clusters/<id>/history/<slot>`: timestamp and the full cluster for `as_of` reads.
+- `alerts/<id>`: publish decision and delivery status; `audit_log/<auto-id>`: who decided and when.
 - `notification_recipients`, `notification_inbox`, `notification_jobs`, `notification_devices`,
-  `notification_telegram_chats`: langganan, inbox, job kirim, token push, dan tautan DM Telegram.
-  Ditulis hanya oleh API/worker; lihat [NOTIFICATIONS.md](NOTIFICATIONS.md). Grup Telegram per provinsi tidak dipakai.
+  `notification_telegram_chats`: subscriptions, inbox, send jobs, push tokens and Telegram DM links.
+  Written only by the API/worker; see [NOTIFICATIONS.md](NOTIFICATIONS.md). Provincial Telegram groups are not used.
 
-Publisher tidak menimpa keputusan operator dan tidak mengganti current cluster dengan snapshot lebih lama.
-Riwayat harus mencakup perubahan yang ingin dilihat saat replay. Snapshot keputusan di antara dua slot,
-closed state historis, version rollover peat mask, serta URL citra yang expired perlu penyempurnaan
-sebelum replay dipakai sebagai audit lengkap.
+The publisher never overwrites an operator decision and never replaces the current cluster with an older snapshot.
+History must include every change that should be visible during replay. Decision snapshots between two slots,
+historical closed state, peat-mask version rollover and expired image URLs need more work before replay
+can serve as a complete audit.
 
-Metadata publik tanpa token tidak berisi email operator atau detail kelompok. Semua endpoint operator
-memerlukan token Firebase. Jangan membuka bucket data ke publik; layer provinsi/gambut yang memang
-publik boleh dikemas sebagai aset FE statis setelah memeriksa lisensi sumber.
+Public metadata without a token contains no operator email or cluster detail. Every operator endpoint
+requires a Firebase token. Never make the data bucket public; province/peat layers that are genuinely public
+may ship as static FE assets after checking the source licence.
