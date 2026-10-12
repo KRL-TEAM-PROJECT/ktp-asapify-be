@@ -47,13 +47,13 @@ async def problem_handler(request, exc: ApiProblem):
 
 @app.exception_handler(RequestValidationError)
 async def invalid_request(request, exc):
-    return JSONResponse(status_code=400, content={"error": {"code": "VALIDATION", "message": "Parameter atau isi permintaan tidak sah."}})
+    return JSONResponse(status_code=400, content={"error": {"code": "VALIDATION", "message": "Invalid parameter or request body."}})
 
 
 @app.exception_handler(Exception)
 async def unavailable(request, exc):
     # Credentials, external response bodies and token-bearing URLs never enter the response.
-    return JSONResponse(status_code=503, content={"error": {"code": "SERVICE_UNAVAILABLE", "message": "Layanan data belum tersedia. Coba lagi nanti."}})
+    return JSONResponse(status_code=503, content={"error": {"code": "SERVICE_UNAVAILABLE", "message": "The data service is not available yet. Try again later."}})
 
 
 @app.get("/api/v1/health")
@@ -85,7 +85,7 @@ def snapshot_data(repo, at: datetime):
     grid = repo.json_object(snap["grid_object"])
     validate_grid(index, grid)
     if grid["slot"] != snap["timestamp"]:
-        raise ApiProblem(503, "DATA_INVALID", "Manifest observasi tidak sesuai grid.")
+        raise ApiProblem(503, "DATA_INVALID", "The observation manifest does not match the grid.")
     return index, grid
 
 
@@ -104,7 +104,7 @@ def pixels(request: Request, as_of: str | None = None, repo=Depends(get_reposito
 def grid(format: Literal["compact", "geojson"] = "geojson", as_of: str | None = None,
          province: str | None = None, repo=Depends(get_repository)):
     if province and (not province.isdigit() or int(province) not in PROVINCES):
-        raise ApiProblem(400, "VALIDATION", "Kode provinsi tidak sah.")
+        raise ApiProblem(400, "VALIDATION", "Invalid province code.")
     index, payload = snapshot_data(repo, as_time(as_of))
     return payload if format == "compact" else geojson(index, payload, province)
 
@@ -115,14 +115,14 @@ def night_grid(night: str, as_of: str | None = None, repo=Depends(get_repository
     at = as_time(as_of)
     snap = repo.snapshot(at)
     if not snap["archive_first"] <= night <= night_of(as_time(snap["timestamp"])):
-        raise ApiProblem(400, "VALIDATION", "Malam berada di luar arsip yang tersedia.")
+        raise ApiProblem(400, "VALIDATION", "The night is outside the available archive.")
     manifest = repo.night(night)
     if manifest is None or not manifest["has_data"]:
         return {"pixels_version": repo.json_object(snap["pixels_object"])["version"], "night": night,
                 "slots": night_slots(night), "status": [None] * 54, "n_sat": [None] * 54, "clusters": {}}
     result = copy.deepcopy(repo.json_object(manifest["object"]))
     if result["slots"] != night_slots(night) or len(result["status"]) != 54 or len(result["n_sat"]) != 54:
-        raise ApiProblem(503, "DATA_INVALID", "Arsip malam tidak konsisten.")
+        raise ApiProblem(503, "DATA_INVALID", "The night archive is inconsistent.")
     for i, slot in enumerate(result["slots"]):
         if as_time(slot) > at:
             result["status"][i], result["n_sat"][i] = None, None
@@ -136,8 +136,8 @@ def night_grid(night: str, as_of: str | None = None, repo=Depends(get_repository
 @operator.get("/nights")
 def nights(month: str, repo=Depends(get_repository)):
     if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
-        raise ApiProblem(400, "VALIDATION", "Bulan harus YYYY-MM yang sah.")
-    return [{k: n[k] for k in ("night", "has_data", "awas_clusters")} for n in repo.nights(month)]
+        raise ApiProblem(400, "VALIDATION", "Month must be a valid YYYY-MM.")
+    return [{k: n[k] for k in ("night", "has_data", "warning_clusters")} for n in repo.nights(month)]
 
 
 @operator.get("/basemaps")
@@ -189,17 +189,17 @@ def decision(cluster_id: str, body: DecisionInput, actor=Depends(require_operato
 
 @operator.post("/clusters/{cluster_id}/verify")
 def verify(cluster_id: str):
-    raise ApiProblem(503, "INTEGRATION_NOT_READY", "Agen verifikasi belum disambungkan.")
+    raise ApiProblem(503, "INTEGRATION_NOT_READY", "The verification agent is not connected yet.")
 
 
 @operator.get("/alerts")
 def alerts():
-    raise ApiProblem(503, "INTEGRATION_NOT_READY", "Pengelolaan peringatan belum tersedia pada tahap ini.")
+    raise ApiProblem(503, "INTEGRATION_NOT_READY", "Alert management is not available at this stage.")
 
 
 @operator.post("/alerts/{alert_id}/close")
 def close_alert(alert_id: str):
-    raise ApiProblem(503, "INTEGRATION_NOT_READY", "Penutupan peringatan belum disambungkan.")
+    raise ApiProblem(503, "INTEGRATION_NOT_READY", "Closing alerts is not connected yet.")
 
 
 app.include_router(operator)

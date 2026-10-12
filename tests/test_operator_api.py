@@ -163,7 +163,7 @@ def test_publication_is_preserved_when_queue_is_unavailable(monkeypatch):
         raise RuntimeError("not configured")
     monkeypatch.setattr(module, "get_tasks", unavailable)
     repo = FakeRepo()
-    r = client(repo, True).post("/api/v1/operator/clusters/test/decision", json={"action": "publish", "caption_id": "AWAS; belum terkonfirmasi"})
+    r = client(repo, True).post("/api/v1/operator/clusters/test/decision", json={"action": "publish", "caption": "WARNING; not confirmed"})
     assert r.status_code == 201 and repo.saves == 1
     assert r.json()["queue"]["state"] == "awaiting_recovery"
 
@@ -183,7 +183,7 @@ def test_consecutive_decisions_reserve_and_enqueue_only_once(monkeypatch):
         return 1
     monkeypatch.setattr(module, "enqueue_pending", enqueue)
     c = client(repo, True)
-    body = {"action": "publish", "caption_id": "AWAS; belum terkonfirmasi"}
+    body = {"action": "publish", "caption": "WARNING; not confirmed"}
     r = c.post("/api/v1/operator/clusters/test/decision", json=body)
     assert r.status_code == 201 and r.json()["notifications"]["recipients"] == 41
     assert c.post("/api/v1/operator/clusters/test/decision", json=body).status_code == 409
@@ -197,7 +197,7 @@ def test_telegram_timeout_is_unknown_and_is_not_retried(monkeypatch):
         calls.append(1)
         raise httpx.ReadTimeout("request with secret URL")
     monkeypatch.setattr(httpx.Client, "post", post)
-    result = delivery.send_photo(("secret", "chat", "https://example.test/photo"), "AWAS")
+    result = delivery.send_photo(("secret", "chat", "https://example.test/photo"), "WARNING")
     assert result["status"] == "unknown" and len(calls) == 1 and "secret" not in str(result)
 
 

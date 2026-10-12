@@ -135,7 +135,7 @@ def hosting(deploy, frontend):
 import { loadEnv } from 'vite';
 const config = { ...loadEnv('production', process.cwd(), 'VITE_'), ...process.env };
 const fields = ['API_KEY', 'AUTH_DOMAIN', 'PROJECT_ID', 'APP_ID'];
-if (fields.some(k => !config['VITE_FIREBASE_' + k] || /SALIN_|YOUR_|PROJECT_ID_YANG|PLACEHOLDER/.test(config['VITE_FIREBASE_' + k]))) {
+if (fields.some(k => !config['VITE_FIREBASE_' + k] || /COPY_FROM|YOUR_|SAME_PROJECT_ID|PLACEHOLDER/.test(config['VITE_FIREBASE_' + k]))) {
   throw new Error('Complete the Firebase Web App config in .env.production.local first.');
 }
 if (config.VITE_FIREBASE_PROJECT_ID !== 'hack2skill-510921') throw new Error('Firebase project mismatch');
@@ -152,14 +152,14 @@ console.log('Firebase public config present; real Google sign-in must still be t
     command(["firebase", "deploy", "--only=hosting", f"--project={PROJECT}", "--non-interactive"],
             apply=deploy.apply, cwd=frontend)
     if deploy.apply:
-        for path, expected in (("/", 200), ("/notifikasi", 200), ("/api/v1/health", 200),
+        for path, expected in (("/", 200), ("/notifications", 200), ("/api/v1/health", 200),
                                ("/api/v1/operator/pixels", 401)):
             status, body = request(ORIGIN + path)
             if status != expected:
                 raise RuntimeError(f"Hosting {path}: expected {expected}, received {status}.")
             if path == "/api/v1/health" and json.loads(body).get("status") != "ok":
                 raise RuntimeError("Hosting API rewrite did not return API health JSON.")
-        print(f"Hosting HTTP checks passed: {ORIGIN}/notifikasi")
+        print(f"Hosting HTTP checks passed: {ORIGIN}/notifications")
         print("Next: test Google sign-in and verify the operator UID before granting the operator role.")
 
 

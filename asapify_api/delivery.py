@@ -9,15 +9,15 @@ from .core import ApiProblem
 
 def prepare_delivery(repo, cluster: dict) -> tuple[str, str, str]:
     if os.environ.get("TELEGRAM_ENABLED", "false").lower() != "true":
-        raise ApiProblem(503, "DELIVERY_NOT_CONFIGURED", "Pengiriman Telegram belum diaktifkan.")
+        raise ApiProblem(503, "DELIVERY_NOT_CONFIGURED", "Telegram delivery is not enabled.")
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if not token:
-        raise ApiProblem(503, "DELIVERY_NOT_CONFIGURED", "Token bot belum dikonfigurasi.")
+        raise ApiProblem(503, "DELIVERY_NOT_CONFIGURED", "The bot token is not configured.")
     images = (cluster.get("verification") or {}).get("images", [])
     # Only pipeline-produced URLs are used; request bodies cannot select the destination/photo.
     preferred = sorted(images, key=lambda i: i.get("source") != "himawari_image")
     if not preferred or not preferred[0].get("url", "").startswith("https://"):
-        raise ApiProblem(503, "DELIVERY_NOT_READY", "Citra bukti belum tersedia untuk peringatan.")
+        raise ApiProblem(503, "DELIVERY_NOT_READY", "No evidence image is available for this alert yet.")
     return token, repo.telegram_chat(cluster["province"]), preferred[0]["url"]
 
 

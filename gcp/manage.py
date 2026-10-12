@@ -22,16 +22,16 @@ APIS = ["run.googleapis.com", "cloudbuild.googleapis.com", "artifactregistry.goo
 class Deploy:
     def __init__(self, project: str, region: str, apply: bool):
         if not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project):
-            raise ValueError("Isi Project ID GCP yang sah, bukan nama tampilan.")
+            raise ValueError("Enter a valid GCP project ID, not the display name.")
         if region != "asia-southeast2":
-            raise ValueError("Paket ini memakai Jakarta; ubah juga firebase.json bila mengganti region.")
+            raise ValueError("This package targets Jakarta; also change firebase.json if you change the region.")
         self.project, self.region, self.apply = project, region, apply
         self.data = f"gs://{project}-asapify-data"
         self.builds = f"gs://{project}-asapify-builds"
         self.api = f"asapify-api@{project}.iam.gserviceaccount.com"
         self.builder = f"asapify-build@{project}.iam.gserviceaccount.com"
         if apply and not shutil.which("gcloud"):
-            raise RuntimeError("Jalankan dari Cloud Shell atau instal Google Cloud CLI resmi.")
+            raise RuntimeError("Run from Cloud Shell or install the official Google Cloud CLI.")
 
     def run(self, *args: str, read=False):
         command = ["gcloud", *args, f"--project={self.project}", "--quiet"]
@@ -52,7 +52,7 @@ class Deploy:
         project = self.run("projects", "describe", self.project, read=True)
         billing = self.run("billing", "projects", "describe", self.project, read=True)
         if self.apply and (project.get("lifecycleState") != "ACTIVE" or not billing.get("billingEnabled")):
-            raise RuntimeError("Project harus aktif dan billing sudah ditautkan sebelum deployment.")
+            raise RuntimeError("The project must be active and linked to billing before deployment.")
 
     def bootstrap(self):
         self.preflight()
@@ -72,7 +72,7 @@ class Deploy:
         database = next((d for d in databases or [] if d["name"].endswith("/asapify")), None)
         if database:
             if database.get("locationId") != self.region or database.get("type") != "FIRESTORE_NATIVE":
-                raise RuntimeError("Database asapify sudah ada dengan lokasi/tipe berbeda; tinjau sebelum lanjut.")
+                raise RuntimeError("Database asapify already exists with a different location/type; review before continuing.")
         else:
             self.run("firestore", "databases", "create", "--database=asapify", f"--location={self.region}",
                      "--type=firestore-native", "--delete-protection")
@@ -89,17 +89,17 @@ class Deploy:
                  f"--member=serviceAccount:{self.builder}", "--role=roles/storage.objectAdmin")
         self.run("artifacts", "repositories", "add-iam-policy-binding", "asapify", f"--location={self.region}",
                  f"--member=serviceAccount:{self.builder}", "--role=roles/artifactregistry.writer")
-        print("Bootstrap selesai hanya bila semua perintah berhasil. Firebase Auth diaktifkan terpisah; lihat docs/GCP.md.")
+        print("Bootstrap is complete only if every command succeeded. Firebase Auth is enabled separately; see docs/GCP.md.")
 
     def image(self, version: str) -> str:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,80}", version):
-            raise ValueError("Versi image tidak sah.")
+            raise ValueError("Invalid image version.")
         return f"{self.region}-docker.pkg.dev/{self.project}/asapify/api:{version}"
 
     def build(self, version: str):
         self.preflight()
         if not Path("Dockerfile").is_file():
-            raise RuntimeError("Jalankan dari root repo backend yang berisi Dockerfile.")
+            raise RuntimeError("Run from the backend repository root that contains the Dockerfile.")
         self.run("builds", "submit", ".", f"--tag={self.image(version)}", f"--region={self.region}",
                  f"--service-account=projects/{self.project}/serviceAccounts/{self.builder}",
                  f"--gcs-source-staging-dir={self.builds}/source", f"--gcs-log-dir={self.builds}/logs")
@@ -128,7 +128,7 @@ def main():
     p.add_argument("--project", required=True)
     p.add_argument("--region", default="asia-southeast2")
     p.add_argument("--version", default="operator-v1")
-    p.add_argument("--apply", action="store_true", help="Eksekusi perintah yang dicetak; tanpa ini hanya rencana.")
+    p.add_argument("--apply", action="store_true", help="Execute the printed commands; without it only the plan is shown.")
     args = p.parse_args()
     d = Deploy(args.project, args.region, args.apply)
     {"check": d.preflight, "bootstrap": d.bootstrap, "build": lambda: d.build(args.version),
