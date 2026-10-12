@@ -62,7 +62,7 @@ def peat_fraction(cells: gpd.GeoDataFrame, peat: gpd.GeoDataFrame, min_fraction:
     shapely.prepare(peat_union)
 
     geoms = cells.geometry.to_numpy()
-    hit = shapely.intersects(geoms, peat_union)          # filter cepat (prepared geometry)
+    hit = shapely.intersects(geoms, peat_union)          # fast filter (prepared geometry)
     fracs = np.zeros(len(cells))
     fracs[hit] = shapely.area(shapely.intersection(geoms[hit], peat_union)) / shapely.area(geoms[hit])
 

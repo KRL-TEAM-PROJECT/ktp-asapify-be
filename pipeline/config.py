@@ -9,10 +9,10 @@ UTC_PLUS_7 = timezone(timedelta(hours=7))  # Western Indonesia Time
 
 
 def _bbox_from_env() -> tuple[float, float, float, float]:
-    # format env: "west,south,east,north"
+    # env format: "west,south,east,north"
     raw = os.environ.get("ASAPIFY_BBOX", "")
     if not raw:
-        raise RuntimeError("Set ASAPIFY_BBOX='west,south,east,north' (bounding box area uji)")
+        raise RuntimeError("Set ASAPIFY_BBOX='west,south,east,north' (test-area bounding box)")
     w, s, e, n = (float(x) for x in raw.split(","))
     return w, s, e, n
 

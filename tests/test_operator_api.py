@@ -152,7 +152,7 @@ def test_reject_reason_required_and_no_cloud_mutation():
 
 def test_reject_is_saved_without_telegram():
     repo = FakeRepo()
-    r = client(repo, True).post("/api/v1/operator/clusters/test/decision", json={"action": "reject", "reason": "perlu kajian"})
+    r = client(repo, True).post("/api/v1/operator/clusters/test/decision", json={"action": "reject", "reason": "needs review"})
     assert r.status_code == 201 and repo.saves == 1 and r.json()["telegram"] is None
 
 

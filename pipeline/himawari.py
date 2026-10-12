@@ -34,7 +34,7 @@ def _solar_elevation_deg(ts_utc: datetime, lat: np.ndarray, lon: np.ndarray) -> 
     decl = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g)
             - 0.006758 * math.cos(2 * g) + 0.000907 * math.sin(2 * g)
             - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
-    tst = hour * 60 + eqtime + 4 * lon               # true solar time (menit)
+    tst = hour * 60 + eqtime + 4 * lon               # true solar time (minutes)
     ha = np.radians(tst / 4 - 180)                   # hour angle
     lat_r = np.radians(lat)
     sin_el = np.sin(lat_r) * math.sin(decl) + np.cos(lat_r) * math.cos(decl) * np.cos(ha)
@@ -42,13 +42,13 @@ def _solar_elevation_deg(ts_utc: datetime, lat: np.ndarray, lon: np.ndarray) -> 
 
 
 class HimawariSource:
-    """value = ΔBT = BT(B07) - BT(B13) per cell, satu timestep."""
+    """value = ΔBT = BT(B07) - BT(B13) per cell, one timestep."""
 
     def __init__(self, cells: CellCoords, *, cloud_bt_k: float = 285.0,
                  night_sun_elev_deg: float = -6.0) -> None:
         self._cells = cells
         self._cloud_bt_k = cloud_bt_k          # placeholder, must be tuned from data
-        self._night_elev = night_sun_elev_deg  # civil twilight: B07 bebas pantulan matahari
+        self._night_elev = night_sun_elev_deg  # civil twilight: B07 free of reflected sunlight
         self._hima = Himawari(region="F", bands=("B07", "B13"))
         self._to_geos: Transformer | None = None
         self._h: float | None = None
@@ -59,7 +59,7 @@ class HimawariSource:
         ts_utc = _as_utc(ts)
         lon, lat = self._lonlat(cell_ids)
 
-        # 1) scene full disk (lazy/dask); 2) lon/lat -> sudut pandang satelit
+        # 1) scene full disk (lazy/dask); 2) lon/lat -> satellite view angle
         da = self._hima.get(ts_utc.strftime("%Y-%m-%dT%H:%M:%S"))
         x, y = self._project(da, lon, lat)
         on_disk = np.isfinite(x) & np.isfinite(y)
@@ -135,4 +135,4 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(figsize=(8, 8))
     peat.to_crs(4326).plot(ax=ax, color="lightgrey")
     peat_cells.sample(min(500, len(peat_cells))).plot(ax=ax, color="red")
-    fig.savefig("cek_peat_cells.png", dpi=150)
+    fig.savefig("check_peat_cells.png", dpi=150)

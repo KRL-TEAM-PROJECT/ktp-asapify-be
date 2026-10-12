@@ -10,7 +10,7 @@ class Status(str, Enum):
     NO_OBSERVATION = "no_observation"  # cloud / data gap. NOT "safe"
     NORMAL = "normal"
     WATCH = "watch"          # low threshold: shown in the UI only, no imagery requested
-    TRIGGERED = "triggered"  # threshold tinggi / persisten: panggil agent
+    TRIGGERED = "triggered"  # high / persistent threshold: call the agent
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ class ThermalObs:
 class CellState:
     cell_id: str
     status: Status
-    score: float | None          # robust z-score terbaru
+    score: float | None          # latest robust z-score
     night_streak: int
     updated_at: datetime
     baseline_frozen: bool = False    # True while the cell is flagged: keep it out of the baseline
