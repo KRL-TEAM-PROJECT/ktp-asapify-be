@@ -9,6 +9,7 @@ on:
     paths:
       - 'asapify_api/**'
       - 'asapify_engine/**'
+      - 'asapify_agent/**'
       - 'main.py'
       - 'Dockerfile'
       - 'requirements-api.txt'

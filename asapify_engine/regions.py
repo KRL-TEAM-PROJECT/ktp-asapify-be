@@ -6,6 +6,13 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+PROVINCE_NAMES = {  # BPS province codes used by the operator API
+    "11": "Aceh", "12": "North Sumatra", "13": "West Sumatra", "14": "Riau", "15": "Jambi",
+    "16": "South Sumatra", "17": "Bengkulu", "18": "Lampung", "19": "Bangka Belitung Islands",
+    "21": "Riau Islands", "61": "West Kalimantan", "62": "Central Kalimantan", "63": "South Kalimantan",
+    "64": "East Kalimantan", "65": "North Kalimantan",
+}
+
 
 @dataclass(frozen=True)
 class Region:

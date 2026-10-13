@@ -1,6 +1,8 @@
-"""Scheduled ingestion: per region, fetch recent canonical inputs, assess every new hour, step the state machine
-and keep one audit record per hour. Network access goes through injectable fetchers, so the whole flow runs in
-tests without the internet.
+"""One cron cycle: per region fetch recent canonical inputs -> assess every new hour -> step the state machine ->
+keep one audit record per hour -> (if needed) the verification agent.
+
+Same shape as pipeline/pipeline.py run_cycle. Network access goes through injectable fetchers and storage through
+the Repo protocol, so the whole flow runs in tests without the internet or Firestore.
 """
 from __future__ import annotations
 
@@ -12,18 +14,21 @@ from typing import Callable, Iterable, Protocol
 
 from . import openmeteo, power
 from .canonical import Baseline, Observation, anomaly, build_baseline
-from .fsm import RegionState, Transition, should_trigger_agent, step
+from .fsm import mark_agent_called, should_trigger_agent, step
+from .models import RegionState, Status, Transition
 from .regions import Region
-from .rules import Assessment, RuleConfig, Status, assess
+from .rules import Assessment, RuleConfig, assess
 
-RECENT_DAYS = 4       # POWER publishes about 2-3 days behind real time
-BASELINE_YEARS = 5    # the baseline uses the five years before the current one
-WINDOW_DAYS = 15      # ± calendar days around the target date
-AHEAD_DAYS = 10       # the cached baseline table reaches this far ahead, so it is rebuilt about once a week
+RECENT_DAYS = 4        # POWER publishes about 2-3 days behind real time
+BASELINE_YEARS = 5     # the baseline uses the five years before the current one
+WINDOW_DAYS = 15       # ± calendar days around the target date
+AHEAD_DAYS = 10        # the cached baseline table reaches this far ahead, so it is rebuilt about once a week
+AGENT_RESERVE_S = 60   # an agent run only starts while this much of the time budget is left
 SKIN = {"source": power.SOURCE, "parameter": "skin_temperature",
         "measurement_type": "earth_skin_temperature", "unit": "K"}
 
 Fetch = Callable[[float, float, date, date], dict]
+Verify = Callable[[Region, dict], dict]   # (region, agent request) -> stored verification record
 
 
 def iso(value: datetime) -> str:
@@ -34,6 +39,17 @@ def parse(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+class Repo(Protocol):
+    """Firestore implementation in repo.py; the tests use an in-memory one."""
+    def get_meta(self) -> dict: ...
+    def save_meta(self, fields: dict) -> None: ...                  # merged into engine_meta/ingestion
+    def get_states(self) -> dict[str, dict]: ...                    # region id -> current region document
+    def get_baseline(self, region_id: str) -> dict | None: ...
+    def save_baseline(self, region_id: str, doc: dict) -> None: ...
+    def save_region(self, doc: dict, hours: list[dict], transitions: list[dict]) -> None: ...
+
+
+# --- baseline ---------------------------------------------------------------------------------------------------
 def _same_day(day: date, year: int) -> date:
     try:
         return day.replace(year=year)
@@ -74,6 +90,7 @@ def refresh_baseline(region: Region, today: date, fetch_power: Fetch, now: datet
             "window_days": WINDOW_DAYS, "entries": baseline_table(history, first, last), "built_at": iso(now)}
 
 
+# --- assessment -------------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class HourResult:
     observed_at: datetime
@@ -97,7 +114,7 @@ def assess_new_hours(recent: list[Observation], clouds: list[Observation], table
     published = [t for t, o in ts.items() if o.usable]
     if not published:
         return []
-    frontier = max(published)  # POWER fills hours it has not published yet; they wait for a later tick
+    frontier = max(published)  # POWER fills hours it has not published yet; they wait for a later cycle
     results = []
     for t in sorted(t for t in ts if t <= frontier and (after is None or t > after)):
         entry = table.get(f"{t:%m%d%H}", [None, None, 0])
@@ -124,15 +141,7 @@ def assess_new_hours(recent: list[Observation], clouds: list[Observation], table
     return results
 
 
-class Store(Protocol):
-    def meta(self) -> dict: ...
-    def save_meta(self, doc: dict) -> None: ...
-    def states(self) -> dict[str, dict]: ...
-    def baseline(self, region_id: str) -> dict | None: ...
-    def save_baseline(self, region_id: str, doc: dict) -> None: ...
-    def save_region(self, doc: dict, hours: list[dict], transitions: list[dict]) -> None: ...
-
-
+# --- state <-> documents ----------------------------------------------------------------------------------------
 def published_frontier(region: Region, now: datetime, fetch_power: Fetch) -> datetime | None:
     """Latest hour POWER has published, probed with one request. POWER publishes every cell at once."""
     today = now.date()
@@ -163,91 +172,129 @@ def _region_doc(region: Region, now: datetime) -> dict:
             "bounds": list(region.bounds), "peat_km2": region.peat_km2, "updated_at": iso(now)}
 
 
-def process_region(store: Store, region: Region, previous: RegionState | None, now: datetime,
+# --- orchestration ----------------------------------------------------------------------------------------------
+def process_region(repo: Repo, region: Region, prev: RegionState | None, now: datetime,
                    fetch_power: Fetch, fetch_cloud: Fetch, cfg: RuleConfig) -> dict:
+    """One region, one write. Returns counts and, when the region entered ALERT, the agent request."""
     today = now.date()
     start = today - timedelta(days=RECENT_DAYS)
-    table = store.baseline(region.id)
+    # 1) baseline table, rebuilt only when the cached one no longer covers the recent window
+    table = repo.get_baseline(region.id)
     if not table or not (table["first"] <= start.isoformat() and today.isoformat() <= table["last"]):
         table = refresh_baseline(region, today, fetch_power, now)
-        store.save_baseline(region.id, table)
+        repo.save_baseline(region.id, table)
+    # 2) recent canonical inputs -> one assessment per hour POWER has published since the last pass
     recent = power.canonicalize(fetch_power(region.lat, region.lon, start, today), now)
     clouds = openmeteo.canonicalize(fetch_cloud(region.lat, region.lon, start, today), now)
     results = assess_new_hours(recent, clouds, table["entries"], table["years"],
-                               previous.observed_at if previous else None, cfg)
-    state, transitions = previous, []
+                               prev.observed_at if prev else None, cfg)
+    # 3) state machine hour by hour; an entry into ALERT anywhere in this pass requests the agent
+    state, transitions, request = prev, [], None
     for r in results:
+        before = state
         state, change = step(state, region.id, r.observed_at, r.assessment)
         if change:
             transitions.append(change)
-    agent_requested = state is not None and should_trigger_agent(previous, state, now)
-    doc = _region_doc(region, now)
-    doc["last_error"] = None
+        if should_trigger_agent(before, state, now, cfg):
+            state = mark_agent_called(state, now)   # saved below, so the cooldown holds even if the agent fails
+            request = {"observed_at": iso(r.observed_at), "requested_at": iso(now)}
+    # 4) current state + hourly audit + transitions in one batch
+    doc = {**_region_doc(region, now), "last_error": None}
     if state is not None:
         doc.update({"status": state.status.value, "since": iso(state.since),
                     "observed_at": iso(state.observed_at), "utilities": state.utilities})
+        if state.last_agent_at is not None:
+            doc["last_agent_at"] = iso(state.last_agent_at)
     if results:
         doc["latest"] = results[-1].record
-    if agent_requested:
-        doc["agent_requested_at"] = iso(now)
-    store.save_region(doc, [{**r.record, "processed_at": iso(now)} for r in results],
-                      [transition_doc(t) for t in transitions])
-    return {"hours": len(results), "transitions": len(transitions), "agent_requested": agent_requested}
+    if request:
+        doc["agent_requested_at"] = request["requested_at"]
+    repo.save_region(doc, [{**r.record, "processed_at": iso(now)} for r in results],
+                     [transition_doc(t) for t in transitions])
+    return {"hours": len(results), "transitions": len(transitions), "agent_request": request}
 
 
-def run_tick(store: Store, regions: Iterable[Region], now: datetime, *, batch: int = 10,
-             budget_s: float | None = None, clock: Callable[[], float] = time.monotonic,
-             fetch_power: Fetch = power.fetch, fetch_cloud: Fetch = openmeteo.fetch,
-             cfg: RuleConfig = RuleConfig()) -> dict:
-    """Bring regions up to the latest hour NASA POWER has published.
+def run_cycle(repo: Repo, regions: Iterable[Region], now: datetime | None = None, *, batch: int = 10,
+              budget_s: float | None = None, clock: Callable[[], float] = time.monotonic,
+              fetch_power: Fetch = power.fetch, fetch_cloud: Fetch = openmeteo.fetch,
+              verify: Verify | None = None, cfg: RuleConfig = RuleConfig()) -> dict:
+    """One 15-minute cycle: agent runs left from earlier cycles, then regions up to the latest hour POWER published.
 
-    POWER publishes about once a day, so most 15-minute ticks cost one Firestore read and one probe request
-    and stop there. When new hours appear, the `batch` least recently updated regions that are behind are
-    processed. With `budget_s`, no new region starts once that many seconds have passed: the request ends
-    inside the caller's timeout and the remaining regions go first on the next tick.
+    POWER publishes about once a day, so most cycles cost one Firestore read and one probe request. When new hours
+    appear, the `batch` least recently updated regions that are behind are processed. With `budget_s`, no region or
+    agent run starts once the budget is spent: the request ends inside the caller's timeout and the remaining work
+    goes first on the next cycle. Agent requests wait in engine_meta, so a failed cycle never loses them.
     """
+    now = now or datetime.now(timezone.utc)
     started = clock()
-    regions = list(regions)
+    by_id = {r.id: r for r in regions}
     summary = {"frontier": None, "skipped": None, "regions": [], "hours": 0, "transitions": 0,
-               "agent_requests": [], "errors": []}
-    if not regions:
+               "agent_requests": [], "verified": [], "errors": []}
+    if not by_id:
         return summary
-    meta = store.meta()
-    frontier, failure = None, None
-    for probe in regions[:3]:  # one failing cell must not block the probe
+    meta = repo.get_meta()
+    pending = dict(meta.get("agent_pending") or {})   # region id -> agent request
+    waiting = dict(pending)
+
+    def time_left() -> float:
+        return float("inf") if budget_s is None else budget_s - (clock() - started)
+
+    def run_agents() -> None:
+        for region_id, request in list(pending.items()):
+            if verify is None or time_left() < AGENT_RESERVE_S:
+                return
+            pending.pop(region_id)   # attempted once: the outcome (or the failure) is recorded, not retried
+            try:
+                record = verify(by_id[region_id], request)
+                summary["verified"].append({"region": region_id, "validation_status": record.get("validation_status")})
+            except Exception as exc:   # e.g. the daily quota is used up
+                summary["errors"].append({"region": region_id, "error": type(exc).__name__})
+
+    # 1) agent runs left over from earlier cycles go first: they are already late
+    run_agents()
+    # 2) probe POWER once; stop if nothing new was published since the last full pass
+    frontier, failure, caught_up = None, None, False
+    for probe in list(by_id.values())[:3]:   # one failing cell must not block the probe
         try:
             frontier, failure = published_frontier(probe, now, fetch_power), None
             break
         except Exception as exc:
             failure = exc
-    if failure is not None:  # POWER unreachable: try again on the next tick
+    if failure is not None:   # POWER unreachable: try again on the next cycle
         summary["errors"].append({"region": None, "error": type(failure).__name__})
-        return summary
-    if frontier is None:
+    elif frontier is None:
         summary["skipped"] = "power has no published hours"
-        return summary
-    summary["frontier"] = iso(frontier)
-    if meta.get("caught_up") == iso(frontier):
-        summary["skipped"] = "no new hours since the last pass"
-        return summary
-    states = store.states()
-    behind = [r for r in regions if _needs_work(states.get(r.id), frontier)]
-    due = sorted(behind, key=lambda r: states.get(r.id, {}).get("updated_at", ""))[:batch]
-    for region in due:
-        if budget_s is not None and clock() - started >= budget_s:
-            break
-        try:
-            result = process_region(store, region, state_from_doc(states.get(region.id)), now,
-                                    fetch_power, fetch_cloud, cfg)
-        except Exception as exc:  # one failing source must not stop the other regions
-            store.save_region({**_region_doc(region, now), "last_error": type(exc).__name__}, [], [])
-            summary["errors"].append({"region": region.id, "error": type(exc).__name__})
-            continue
-        summary["regions"].append(region.id)
-        summary["hours"] += result["hours"]
-        summary["transitions"] += result["transitions"]
-        if result["agent_requested"]:
-            summary["agent_requests"].append(region.id)
-    if len(summary["regions"]) == len(behind):
-        store.save_meta({"caught_up": iso(frontier), "updated_at": iso(now)})
+    elif meta.get("caught_up") == iso(frontier):
+        summary["frontier"], summary["skipped"] = iso(frontier), "no new hours since the last pass"
+    else:
+        # 3) regions that are behind, least recently updated first, within the batch and the time budget
+        summary["frontier"] = iso(frontier)
+        states = repo.get_states()
+        behind = [r for r in by_id.values() if _needs_work(states.get(r.id), frontier)]
+        due = sorted(behind, key=lambda r: states.get(r.id, {}).get("updated_at", ""))[:batch]
+        for region in due:
+            if time_left() <= 0:
+                break
+            try:
+                result = process_region(repo, region, state_from_doc(states.get(region.id)), now,
+                                        fetch_power, fetch_cloud, cfg)
+            except Exception as exc:   # one failing source must not stop the other regions
+                repo.save_region({**_region_doc(region, now), "last_error": type(exc).__name__}, [], [])
+                summary["errors"].append({"region": region.id, "error": type(exc).__name__})
+                continue
+            summary["regions"].append(region.id)
+            summary["hours"] += result["hours"]
+            summary["transitions"] += result["transitions"]
+            if result["agent_request"]:
+                summary["agent_requests"].append(region.id)
+                pending[region.id] = result["agent_request"]
+        caught_up = len(summary["regions"]) == len(behind)
+        # 4) agent runs for regions that entered ALERT in this pass, while time is left
+        run_agents()
+    # 5) remember the caught-up hour and the agent runs still waiting
+    fields = {"caught_up": iso(frontier), "updated_at": iso(now)} if caught_up else {}
+    if pending != waiting:
+        fields["agent_pending"] = pending
+    if fields:
+        repo.save_meta(fields)
     return summary

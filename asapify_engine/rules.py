@@ -1,24 +1,16 @@
 """Rules engine: Fuzzy MAUT utilities per status, then a risk-weighted argmax with a safety margin.
 
-Pure functions, no I/O. Every breakpoint is an initial prototype parameter from the design document and
-must be calibrated on historical data. A utility says how well the conditions match a status; it is not a
-calibrated fire probability.
+Pure functions: no I/O, no AI, easy to unit-test. Every number in RuleConfig is an initial HYPOTHESIS from the
+design document, not validated yet: calibrate it with a backtest. A utility says how well the conditions match a
+status; it is not a calibrated fire probability.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from datetime import timedelta
 from math import inf
 
-
-class Status(str, Enum):
-    SAFE = "SAFE"
-    WARNING = "WARNING"
-    ALERT = "ALERT"
-    NO_OBSERVABLE = "NO_OBSERVABLE"
-
-
-SEVERITY = {Status.SAFE: 0, Status.WARNING: 1, Status.ALERT: 2}
+from .models import SEVERITY, Status
 
 Trapezoid = tuple[float, float, float, float]
 
@@ -51,7 +43,8 @@ class RuleConfig:
     humidity_high: Trapezoid = (40.0, 60.0, inf, inf)   # %; SAFE: high relative humidity
     humidity_low: Trapezoid = (-inf, -inf, 30.0, 40.0)  # %; ALERT: relative humidity below 30 %
     cloud_max: float = 60.0                              # %; above this the region is NO_OBSERVABLE
-    safety_margin: float = 0.05
+    safety_margin: float = 0.05                          # utilities this close: take the more severe status
+    cooldown: timedelta = timedelta(hours=6)             # minimum gap between two automatic agent runs
     weights: dict[Status, dict[str, float]] = field(default_factory=_default_weights)
 
 

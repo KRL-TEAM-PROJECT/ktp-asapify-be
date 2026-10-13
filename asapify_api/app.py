@@ -138,7 +138,7 @@ def night_grid(night: str, as_of: str | None = None, repo=Depends(get_repository
 def nights(month: str, repo=Depends(get_repository)):
     if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
         raise ApiProblem(400, "VALIDATION", "Month must be a valid YYYY-MM.")
-    return [{k: n[k] for k in ("night", "has_data", "warning_clusters")} for n in repo.nights(month)]
+    return [{k: n[k] for k in ("night", "has_data", "alert_clusters")} for n in repo.nights(month)]
 
 
 @operator.get("/basemaps")

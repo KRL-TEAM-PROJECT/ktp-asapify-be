@@ -6,7 +6,8 @@ import pytest
 from asapify_engine import openmeteo, power
 from asapify_engine.canonical import Observation, Quality, anomaly, build_baseline
 from asapify_engine.fsm import mark_agent_called, should_trigger_agent, step
-from asapify_engine.rules import Status, assess, trapezoid
+from asapify_engine.models import Status
+from asapify_engine.rules import RuleConfig, assess, trapezoid
 
 UTC = timezone.utc
 T0 = datetime(2026, 10, 10, 5, tzinfo=UTC)
@@ -119,3 +120,5 @@ def test_agent_runs_on_entering_alert_and_respects_the_cooldown():
     assert not should_trigger_agent(warning, again, T0 + timedelta(hours=4))   # within 6 h
     later, _ = step(warning, "r1", T0 + timedelta(hours=8), assess(9.0, 25.0, 10.0))
     assert should_trigger_agent(warning, later, T0 + timedelta(hours=8))
+    short = RuleConfig(cooldown=timedelta(hours=1))
+    assert should_trigger_agent(warning, again, T0 + timedelta(hours=4), short)   # the cooldown lives in RuleConfig
