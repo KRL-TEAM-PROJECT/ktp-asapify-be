@@ -1,4 +1,4 @@
-"""NASA FIRMS area API (pull-only, needs a MAP_KEY) -> hotspot rows for the verification agent.
+"""NASA FIRMS area API (pull-only, needs a MAP_KEY) -> hotspot rows for the verification agent and VIIRS support.
 
 Same contract as pipeline/firms.py (`fetch_firms` + `normalize`), checked against the live API on 2026-10-13: VIIRS
 rows carry bright_ti4 (K), confidence n/l/h and frp (MW); DATE + DAY_RANGE returns DATE .. DATE+DAY_RANGE-1 and
@@ -10,7 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -59,6 +59,15 @@ def normalize(rows: list[dict]) -> list[dict]:
             "frp_mw": _number(r.get("frp")), "daynight": r.get("daynight"),
         })
     return out
+
+
+def area_hotspots(map_key: str, sources: list[str], bbox: tuple[float, float, float, float], start: datetime,
+                  end: datetime, client: httpx.Client | None = None) -> list[dict]:
+    """Normalised hotspots of every source inside `bbox` acquired from `start` to `end` (one request per source)."""
+    first = max(start.date(), end.date() - timedelta(days=MAX_DAY_RANGE - 1))
+    rows = [row for source in sources
+            for row in fetch_firms(map_key, source, bbox, (end.date() - first).days + 1, first.isoformat(), client)]
+    return [h for h in normalize(rows) if start <= h["acq_ts"] <= end]
 
 
 def _number(value) -> float | None:

@@ -3,6 +3,7 @@ from typing import AsyncGenerator
 
 import httpx
 import pytest
+import yaml
 
 from asapify_engine import firms, verifier
 from asapify_engine.config import Settings
@@ -11,12 +12,16 @@ from asapify_engine.regions import Region
 UTC = timezone.utc
 NOW = datetime(2026, 10, 13, 6, tzinfo=UTC)
 REGION = Region("R2.50S113.750E", -2.5, 113.75, (113.4375, -2.75, 114.0625, -2.25), "62", 812.0)
+VIEW = {"n_pixels": 420, "n_peat": 160, "n_peat_clear": 150, "cloud_fraction": 0.0625, "background_k": 2.1,
+        "background_mad_k": 0.4, "max_anomaly_k": 8.4, "max_z": 21.0, "n_hot": 2, "hot_lat": -2.51, "hot_lon": 113.8,
+        "mwir_k": 309.4, "lwir_k": 298.9}
 RECORD = {"observed_at": "2026-10-10T06:00:00Z", "status": "ALERT", "reason": "ALERT has the highest utility (0.900)",
-          "utilities": {"SAFE": 0.0, "WARNING": 0.1, "ALERT": 0.9},
-          "inputs": {"delta_t_k": 8.4, "skin_temperature_k": 310.2, "baseline_k": 301.8,
-                     "relative_humidity_pct": 27.0, "cloud_cover_pct": 12.0},
-          "quality": {"skin_temperature": "ACCEPTED", "relative_humidity": "ACCEPTED", "cloud_cover": "ACCEPTED"},
-          "flags": ["model_estimate", "reanalysis_estimate"]}
+          "utilities": {"SAFE": 0.0, "WARNING": 0.1, "ALERT": 0.9}, "night": True, "sun_elevation_deg": -42.0,
+          "views": {"himawari9": VIEW, "gk2a": {**VIEW, "max_anomaly_k": 9.1}},
+          "inputs": {"delta_t_k": 8.4, "cloud_cover_pct": 6.2, "relative_humidity_pct": 27.0,
+                     "hot_lat": -2.51, "hot_lon": 113.8},
+          "support": {"viirs_support": 0.8}, "quality": {"thermal": "ACCEPTED", "relative_humidity": "ACCEPTED"},
+          "flags": ["two_satellites_agree", "model_estimate"]}
 SETTINGS = Settings(project="test", firms_map_key="KEY", firms_source="VIIRS_NOAA20_NRT",
                     gemini_model="gemini-test", agent_daily_quota=2)
 YAML_OK = """\
@@ -57,10 +62,14 @@ def test_parse_accepts_plain_or_fenced_yaml_and_nothing_else():
         verifier.parse_verdict("validation_status: MAYBE\n")
 
 
-def test_payload_carries_the_region_and_the_hour_under_review():
+def test_payload_carries_the_region_and_the_slot_under_review():
     payload = verifier.build_payload(REGION, RECORD, "auto", NOW)
     assert "Central Kalimantan (62)" in payload and "delta_t_k: 8.4" in payload
     assert "rules_engine_status: ALERT" in payload and "entered ALERT" in payload
+    data = yaml.safe_load(payload)["observation"]
+    assert data["satellites"]["gk2a"] == {"max_anomaly_k": 9.1, "max_z": 21.0, "n_hot": 2, "cloud_fraction": 0.0625,
+                                          "hot_lat": -2.51, "hot_lon": 113.8}
+    assert data["night"] is True and data["support"] == {"viirs_support": 0.8} and "background_k" not in str(data)
 
 
 def test_confirmed_verdict_backed_by_the_tool_is_kept():
@@ -158,7 +167,7 @@ class MemoryRepo:
     def get_region(self, region_id):
         return {"id": region_id, "latest": RECORD}
 
-    def get_hour(self, region_id, observed_at):
+    def get_slot(self, region_id, observed_at):
         return None
 
     def reserve_agent_call(self, day: date, limit):

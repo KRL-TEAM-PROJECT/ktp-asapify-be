@@ -1,8 +1,11 @@
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+import asapify_engine
 from asapify_api.app import app
 from asapify_api.auth import require_operator
 from asapify_api.engine_routes import get_engine_repo
@@ -41,18 +44,10 @@ def power_fetch(recent_celsius, humidity, calls=None, frontier=FRONTIER):
     return fetch
 
 
-def cloud_fetch(cover):
-    def fetch(lat, lon, start, end):
-        times = list(hours(start, end))
-        return {"latitude": lat, "longitude": lon,
-                "hourly": {"time": [f"{t:%Y-%m-%dT%H:%M}" for t in times], "cloud_cover": [cover] * len(times)}}
-    return fetch
-
-
 class FakeRepo:
-    """In-memory Repo (ingest.py) + the agent and decision parts of FirestoreRepo."""
+    """In-memory Repo (ingest.py, geo.py) + the agent and decision parts of FirestoreRepo."""
     def __init__(self):
-        self.docs, self.baselines, self.hours, self.transitions, self.meta_doc = {}, {}, {}, {}, {}
+        self.docs, self.baselines, self.hours, self.slots, self.transitions, self.meta_doc = {}, {}, {}, {}, {}, {}
         self.verifications, self.quota, self.alerts, self.audit = {}, {}, {}, []
 
     def get_meta(self):
@@ -70,21 +65,28 @@ class FakeRepo:
     def save_baseline(self, region_id, doc):
         self.baselines[region_id] = doc
 
-    def save_region(self, doc, hours, transitions):
+    def save_region(self, doc, hours):
         self.docs.setdefault(doc["id"], {}).update(doc)
         self.hours.setdefault(doc["id"], []).extend(hours)
-        self.transitions.setdefault(doc["id"], []).extend(transitions)
+
+    def save_slots(self, entries):
+        for doc, record, transitions in entries:
+            self.docs.setdefault(doc["id"], {}).update(doc)   # top-level fields replaced whole, like merge=list(doc)
+            if record is not None:
+                self.slots.setdefault(doc["id"], []).append(record)
+            self.transitions.setdefault(doc["id"], []).extend(transitions)
 
     def get_region(self, region_id):
         return self.docs.get(region_id)
 
-    def get_hour(self, region_id, observed_at):
-        return next((h for h in self.hours.get(region_id, []) if h["observed_at"] == observed_at), None)
+    def get_slot(self, region_id, observed_at):
+        return next((s for s in self.slots.get(region_id, []) if s["observed_at"] == observed_at), None)
 
     def region_detail(self, region_id, hours):
         doc = self.docs.get(region_id)
-        return None if doc is None else {**doc, "hours": self.hours[region_id][-hours:],
-                                         "transitions": self.transitions[region_id][::-1],
+        return None if doc is None else {**doc, "slots": self.slots.get(region_id, [])[-hours * 6:],
+                                         "hours": self.hours.get(region_id, [])[-hours:],
+                                         "transitions": self.transitions.get(region_id, [])[::-1],
                                          "verifications": self.verifications.get(region_id, [])[::-1]}
 
     def agent_calls(self, day):
@@ -114,23 +116,25 @@ class FakeRepo:
         return record
 
 
-def tick(repo, celsius=25.5, humidity=80.0, cover=20, batch=2, calls=None, now=NOW, frontier=FRONTIER, verify=None):
-    return run_cycle(repo, REGIONS, now, batch=batch, fetch_power=power_fetch(celsius, humidity, calls, frontier),
-                     fetch_cloud=cloud_fetch(cover), verify=verify)
+def tick(repo, celsius=25.5, humidity=80.0, batch=2, calls=None, now=NOW, frontier=FRONTIER):
+    return run_cycle(repo, REGIONS, now, batch=batch, fetch_power=power_fetch(celsius, humidity, calls, frontier))
 
 
-def test_first_cycle_assesses_every_published_hour_and_rotates_regions():
+# ---------- NASA POWER as supporting data ----------
+
+def test_power_support_records_every_published_hour_and_rotates_regions():
     repo = FakeRepo()
     summary = tick(repo)
     assert summary["regions"] == [r.id for r in REGIONS[:2]] and summary["errors"] == []
     first = repo.docs[REGIONS[0].id]
-    assert first["status"] == "SAFE" and first["observed_at"] == "2026-10-10T23:00:00Z"
+    assert "status" not in first                         # the satellites set the status, not POWER
+    assert first["power"]["observed_at"] == "2026-10-10T23:00:00Z" and first["power"]["delta_t_k"] == 0.5
+    assert first["power"]["relative_humidity_pct"] == 80.0 and first["power_error"] is None
     assert len(repo.hours[REGIONS[0].id]) == 48          # 9 and 10 October; 11-13 are not published yet
     record = repo.hours[REGIONS[0].id][-1]
-    assert record["inputs"]["delta_t_k"] == 0.5 and record["inputs"]["baseline_samples"] >= 30
-    assert record["quality"] == {"skin_temperature": "ACCEPTED", "relative_humidity": "ACCEPTED", "cloud_cover": "ACCEPTED"}
-    assert "model_estimate" in record["flags"] and record["sources"]["cloud_cover"] == "open_meteo"
-    assert repo.transitions[REGIONS[0].id][0]["previous"] is None
+    assert record["inputs"]["baseline_samples"] >= 30 and "status" not in record
+    assert record["quality"] == {"skin_temperature": "ACCEPTED", "relative_humidity": "ACCEPTED"}
+    assert "reanalysis_estimate" in record["flags"]
     assert tick(repo)["regions"][0] == REGIONS[2].id     # the never-processed region goes next
 
 
@@ -142,78 +146,10 @@ def test_idle_cycles_cost_one_probe_and_new_hours_wake_the_next_pass():
     idle = tick(repo, batch=3, calls=calls, now=NOW + timedelta(minutes=15))
     assert idle["skipped"] and idle["hours"] == 0 and len(calls) == 1   # one probe, nothing else
     calls = []
-    later = tick(repo, batch=3, calls=calls, now=NOW + timedelta(days=1),
-                 frontier=FRONTIER + timedelta(days=1))
+    later = tick(repo, batch=3, calls=calls, now=NOW + timedelta(days=1), frontier=FRONTIER + timedelta(days=1))
     assert later["hours"] == 3 * 24 and len(calls) == 1 + 3            # probe + one request per region
     assert repo.meta_doc["caught_up"] == "2026-10-11T23:00:00Z"
-
-
-def test_hot_and_dry_region_enters_alert_and_requests_the_agent_once():
-    repo = FakeRepo()
-    summary = tick(repo, celsius=34.5, humidity=25.0, batch=1)
-    rid = REGIONS[0].id
-    assert repo.docs[rid]["status"] == "ALERT" and summary["agent_requests"] == [rid]
-    assert repo.docs[rid]["latest"]["utilities"]["ALERT"] == 1.0
-    assert repo.docs[rid]["last_agent_at"] == "2026-10-13T06:00:00Z"   # stored first: the cooldown survives a failure
-    assert repo.transitions[rid] == [repo.transitions[rid][0]] and repo.transitions[rid][0]["current"] == "ALERT"
-    assert repo.meta_doc["agent_pending"] == {rid: {"observed_at": "2026-10-09T00:00:00Z",
-                                                    "requested_at": "2026-10-13T06:00:00Z"}}
-    again = run_cycle(repo, REGIONS[:1], NOW + timedelta(hours=1), batch=1,
-                      fetch_power=power_fetch(34.5, 25.0), fetch_cloud=cloud_fetch(20))
-    assert again["agent_requests"] == []                   # already ALERT: no second request
-
-
-def test_cooldown_from_an_earlier_cycle_blocks_a_new_request():
-    repo = FakeRepo()
-    rid = REGIONS[0].id
-    tick(repo, celsius=34.5, humidity=25.0, batch=1)
-    repo.docs[rid]["status"] = "SAFE"                      # e.g. it left ALERT in between
-    later = run_cycle(repo, REGIONS[:1], NOW + timedelta(hours=2), batch=1,
-                      fetch_power=power_fetch(34.5, 25.0, frontier=FRONTIER + timedelta(hours=1)),
-                      fetch_cloud=cloud_fetch(20))
-    assert later["agent_requests"] == []                   # last_agent_at was read back from the document
-
-
-def test_waiting_agent_runs_are_served_on_the_next_cycle_even_when_idle():
-    repo = FakeRepo()
-    tick(repo, celsius=34.5, humidity=25.0, batch=3)       # no verifier configured: requests wait in meta
-    assert len(repo.meta_doc["agent_pending"]) == 3
-    seen = []
-
-    def verify(region, request):
-        seen.append((region.id, request["observed_at"]))
-        return {"validation_status": "NEEDS_MANUAL_REVIEW"}
-
-    idle = tick(repo, celsius=34.5, humidity=25.0, batch=3, now=NOW + timedelta(minutes=15), verify=verify)
-    assert idle["skipped"] and [v["region"] for v in idle["verified"]] == [r.id for r in REGIONS]
-    assert seen[0] == (REGIONS[0].id, "2026-10-09T00:00:00Z") and repo.meta_doc["agent_pending"] == {}
-
-
-def test_agent_runs_wait_when_the_time_budget_is_spent():
-    repo, ticks = FakeRepo(), iter(range(0, 10_000, 30))   # every clock read advances 30 s
-    summary = run_cycle(repo, REGIONS[:1], NOW, batch=1, budget_s=60, clock=lambda: next(ticks),
-                        fetch_power=power_fetch(34.5, 25.0), fetch_cloud=cloud_fetch(20),
-                        verify=lambda region, request: pytest.fail("no time left for the agent"))
-    assert summary["agent_requests"] == [REGIONS[0].id] and summary["verified"] == []
-    assert REGIONS[0].id in repo.meta_doc["agent_pending"]
-
-
-def test_a_failing_agent_is_recorded_and_not_retried_forever():
-    repo = FakeRepo()
-
-    def broken(region, request):
-        raise RuntimeError("quota")
-
-    summary = tick(repo, celsius=34.5, humidity=25.0, batch=1, verify=broken)
-    assert summary["errors"] == [{"region": REGIONS[0].id, "error": "RuntimeError"}]
-    assert repo.meta_doc.get("agent_pending", {}) == {}
-
-
-def test_cloudy_hours_are_no_observable():
-    repo = FakeRepo()
-    tick(repo, cover=90, batch=1)
-    assert repo.docs[REGIONS[0].id]["status"] == "NO_OBSERVABLE"
-    assert "cloud cover" in repo.docs[REGIONS[0].id]["latest"]["reason"]
+    assert repo.docs[REGIONS[0].id]["power"]["observed_at"] == "2026-10-11T23:00:00Z"
 
 
 def test_a_failing_source_is_recorded_and_does_not_stop_other_regions():
@@ -225,24 +161,26 @@ def test_a_failing_source_is_recorded_and_does_not_stop_other_regions():
             raise TimeoutError("upstream timeout")
         return ok(lat, lon, start, end)
 
-    summary = run_cycle(repo, REGIONS, NOW, batch=2, fetch_power=flaky, fetch_cloud=cloud_fetch(20))
+    summary = run_cycle(repo, REGIONS, NOW, batch=2, fetch_power=flaky)
     assert summary["errors"] == [{"region": REGIONS[0].id, "error": "TimeoutError"}]
     assert summary["regions"] == [REGIONS[1].id]
-    assert repo.docs[REGIONS[0].id]["last_error"] == "TimeoutError" and "status" not in repo.docs[REGIONS[0].id]
+    assert repo.docs[REGIONS[0].id]["power_error"] == "TimeoutError" and "power" not in repo.docs[REGIONS[0].id]
 
 
 def test_time_budget_stops_before_starting_another_region():
     repo, ticks = FakeRepo(), iter(range(0, 1000, 30))   # every clock read advances 30 s
     summary = run_cycle(repo, REGIONS, NOW, batch=3, budget_s=50, clock=lambda: next(ticks),
-                        fetch_power=power_fetch(25.5, 80.0), fetch_cloud=cloud_fetch(20))
+                        fetch_power=power_fetch(25.5, 80.0))
     assert summary["regions"] == [REGIONS[0].id]          # clock: 0 at start, 30 before region 1, 60 >= 50 before region 2
     assert tick(repo, batch=1)["regions"] == [REGIONS[1].id]
 
 
-def test_regions_file_is_valid():
+def test_regions_file_and_peat_shapes_are_valid():
     regions = load_regions()
     assert len(regions) > 10 and len({r.id for r in regions}) == len(regions)
     assert all(r.province.isdigit() and r.peat_km2 >= 25 for r in regions)
+    peat = json.loads(Path(asapify_engine.__file__).with_name("regions_peat.geojson").read_text(encoding="utf-8"))
+    assert {f["properties"]["id"] for f in peat["features"]} == {r.id for r in regions}
 
 
 # ---------- API ----------
@@ -250,7 +188,6 @@ def test_regions_file_is_valid():
 @pytest.fixture
 def api():
     repo = FakeRepo()
-    tick(repo, batch=len(REGIONS))
     app.dependency_overrides[get_engine_repo] = lambda: repo
     yield repo
     app.dependency_overrides.clear()
@@ -260,20 +197,32 @@ def test_region_endpoints_require_an_operator(api):
     c = TestClient(app, raise_server_exceptions=False)
     assert c.get("/api/v1/operator/regions").status_code == 401
     assert c.post(f"/api/v1/operator/regions/{load_regions()[0].id}/verify").status_code == 401
-    assert c.post("/_internal/engine/tick").status_code in (401, 503)   # worker identity only
+    assert c.post("/_internal/engine/tick").status_code in (401, 503)       # worker identity only
+    assert c.post("/_internal/engine/geo-tick").status_code in (401, 503)
 
 
-def test_operator_lists_regions_and_reads_one(api):
+def test_operator_lists_regions_and_reads_one_with_its_slots(api):
     app.dependency_overrides[require_operator] = lambda: {"uid": "test", "email": "operator@example.test"}
     c = TestClient(app, raise_server_exceptions=False)
+    known = load_regions()[0].id
+    start = datetime(2026, 10, 11, 12, tzinfo=UTC)
+    slots = [{"observed_at": f"{start + timedelta(minutes=10 * i):%Y-%m-%dT%H:%M:%SZ}", "status": "SAFE",
+              "inputs": {"delta_t_k": 0.4}, "quality": {"thermal": "ACCEPTED"}, "flags": ["two_satellites_quiet"],
+              "night": True, "reason": "SAFE has the highest utility (1.000)"} for i in range(30)]
+    api.docs[known] = {"id": known, "status": "SAFE", "since": slots[0]["observed_at"],
+                       "observed_at": slots[-1]["observed_at"], "utilities": {"SAFE": 1.0}, "latest": slots[-1],
+                       "power": {"observed_at": "2026-10-10T23:00:00Z", "delta_t_k": 0.5}}
+    api.slots[known] = slots
+    api.hours[known] = [{"observed_at": f"2026-10-10T{h:02d}:00:00Z"} for h in range(24)]
     listing = c.get("/api/v1/operator/regions").json()
     assert len(listing) == len(load_regions())               # unprocessed regions are listed with status null
-    assert all(item["status"] is None for item in listing)   # the fake repo holds test-only region ids
-    known = load_regions()[0].id
-    api.docs[known] = {**api.docs[REGIONS[0].id], "id": known}
-    api.hours[known] = api.hours[REGIONS[0].id]
-    api.transitions[known] = api.transitions[REGIONS[0].id]
-    detail = c.get(f"/api/v1/operator/regions/{known}?hours=24").json()
-    assert detail["status"] == "SAFE" and len(detail["hours"]) == 24 and detail["verifications"] == []
+    item = next(i for i in listing if i["id"] == known)
+    assert item["status"] == "SAFE" and item["flags"] == ["two_satellites_quiet"] and item["night"] is True
+    assert sum(1 for i in listing if i["status"] is None) == len(listing) - 1
+    detail = c.get(f"/api/v1/operator/regions/{known}?hours=2").json()
+    assert len(detail["slots"]) == 12 and detail["slots"][-1] == slots[-1] and len(detail["hours"]) == 2
+    assert detail["power"]["delta_t_k"] == 0.5 and detail["verifications"] == []
+    assert len(c.get(f"/api/v1/operator/regions/{known}").json()["slots"]) == 30   # default: the last 24 hours
+    assert c.get(f"/api/v1/operator/regions/{known}?hours=500").status_code >= 400
     assert c.get("/api/v1/operator/regions/R9.99S999.999E").status_code == 404
     assert c.get("/api/v1/operator/regions/not-a-region").status_code == 400

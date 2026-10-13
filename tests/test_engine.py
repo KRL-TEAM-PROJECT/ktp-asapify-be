@@ -3,7 +3,7 @@ from math import inf
 
 import pytest
 
-from asapify_engine import openmeteo, power
+from asapify_engine import power
 from asapify_engine.canonical import Observation, Quality, anomaly, build_baseline
 from asapify_engine.fsm import mark_agent_called, should_trigger_agent, step
 from asapify_engine.models import Status
@@ -33,15 +33,6 @@ def test_power_canonicalises_units_and_rejects_fill_values():
     assert obs[("skin_temperature", 6)].quality is Quality.REJECTED
     assert "missing_value" in obs[("relative_humidity", 6)].quality_flags
     assert all("reanalysis_estimate" in o.quality_flags for o in obs.values())
-
-
-def test_open_meteo_cloud_cover_is_flagged_as_model_estimate():
-    raw = {"latitude": -2.375, "longitude": 113.875,
-           "hourly": {"time": ["2026-10-10T05:00", "2026-10-10T06:00"], "cloud_cover": [42, None]}}
-    first, second = openmeteo.canonicalize(raw, T0)
-    assert first.parameter == "cloud_cover" and first.value == 42.0 and first.observed_at == T0
-    assert "model_estimate" in first.quality_flags
-    assert second.quality is Quality.REJECTED
 
 
 def test_baseline_uses_same_hour_and_calendar_window_of_earlier_years_only():
@@ -95,6 +86,28 @@ def test_no_observable_when_cloudy_or_inputs_missing():
     assert assess(9.0, 25.0, cloud=75.0).status is Status.NO_OBSERVABLE
     missing = assess(None, 25.0, cloud=10.0)
     assert missing.status is Status.NO_OBSERVABLE and missing.utilities == {} and "delta_t" in missing.reason
+
+
+def test_humidity_is_optional_and_said_so():
+    dry_unknown = assess(9.0, None, cloud=10.0)
+    assert dry_unknown.status is Status.ALERT and dry_unknown.utilities["ALERT"] == 1.0
+    assert "humidity_low" not in dry_unknown.memberships and "humidity unavailable" in dry_unknown.reason
+
+
+def test_degraded_views_are_capped_at_warning():
+    capped = assess(9.0, 25.0, cloud=10.0, cap="daytime")
+    assert capped.status is Status.WARNING and capped.utilities["ALERT"] == 1.0
+    assert capped.reason.endswith("capped at WARNING (daytime)")
+    assert assess(0.5, 80.0, cloud=10.0, cap="daytime").status is Status.SAFE   # the cap only lowers ALERT
+
+
+def test_support_only_ever_raises_alert():
+    base = assess(9.0, 25.0, cloud=10.0)
+    weak = assess(9.0, 25.0, cloud=10.0, support={"viirs_support": 0.1})
+    assert weak.utilities["ALERT"] == base.utilities["ALERT"] == 1.0   # a weak support never dilutes ALERT
+    lifted = assess(6.8, 35.0, cloud=10.0, support={"viirs_support": 1.0, "power_support": 1.0})
+    assert lifted.utilities["ALERT"] == 0.5692 and lifted.status is Status.ALERT
+    assert assess(6.8, 35.0, cloud=10.0, support={"unknown": 1.0}).status is Status.WARNING
 
 
 # ---------- state machine ----------
