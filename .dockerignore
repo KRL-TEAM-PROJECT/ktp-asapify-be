@@ -3,5 +3,7 @@
 !main.py
 !asapify_api/
 !asapify_api/**
+!asapify_engine/
+!asapify_engine/**
 **/__pycache__/
 **/*.pyc
