@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'asapify_api/**'
+      - 'asapify_engine/**'
       - 'main.py'
       - 'Dockerfile'
       - 'requirements-api.txt'

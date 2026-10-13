@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from .auth import require_operator
 from .core import (ApiProblem, DecisionInput, PROVINCES, as_time, check_decidable,
                    date_key, geojson, iso, night_of, night_slots, utc_now, validate_grid)
+from .engine_routes import router as engine_router
 from .notification_routes import router as notification_router
 from .notification_store import get_notification_store
 from .notification_tasks import enqueue_pending, get_tasks
@@ -203,5 +204,7 @@ def close_alert(alert_id: str):
 
 
 app.include_router(operator)
+
+app.include_router(engine_router)
 
 app.include_router(notification_router)
