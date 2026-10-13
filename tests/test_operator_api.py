@@ -118,7 +118,7 @@ def test_no_data_is_not_safe():
 
 def test_grid_preserves_missing_data_and_lon_lat():
     data = geojson(INDEX, GRID)
-    assert data["features"][1]["properties"]["status"] == "NO_OBSERVATION"
+    assert data["features"][1]["properties"]["status"] == "NO_OBSERVABLE"
     assert data["features"][1]["properties"]["utility"] is None
     assert data["features"][0]["geometry"]["coordinates"] == pytest.approx([113.93, -2.21])
 

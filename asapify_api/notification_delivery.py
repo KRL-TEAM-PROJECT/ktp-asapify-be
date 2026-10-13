@@ -24,7 +24,7 @@ def text_message(inbox):
     parser.feed(inbox['text'])
     prefix = '[EXERCISE] ' if inbox['purpose'] == 'exercise' else ''
     body = prefix + ''.join(parser.parts).strip()
-    return body[:1800] + '\nWARNING is an indication, not a confirmed fire.'
+    return body[:1800] + '\nALERT is an indication, not a confirmed fire.'
 
 
 def outcome(status, error=None, provider_id=None):

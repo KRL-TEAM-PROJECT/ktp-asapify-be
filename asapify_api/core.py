@@ -9,8 +9,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 UTC = timezone.utc
-# Compact status letters are part of the pipeline contract; "A" (alarm) is the WARNING level.
-STATUS = {"S": "SAFE", "N": "NO_OBSERVATION", "W": "WATCH", "A": "WARNING"}
+# Compact status letters are part of the pipeline contract: SAFE < WARNING < ALERT, plus NO_OBSERVABLE.
+STATUS = {"S": "SAFE", "N": "NO_OBSERVABLE", "W": "WARNING", "A": "ALERT"}
 PROVINCES = {11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 61, 62, 63, 64, 65}
 
 

@@ -62,7 +62,7 @@ class CloudRepository:
     def clusters(self, state: str, night: str | None, at: datetime | None) -> list[dict]:
         q = self.db.collection("clusters")
         if night:
-            q = q.where(filter=FieldFilter("warning_nights", "array_contains", night))
+            q = q.where(filter=FieldFilter("alert_nights", "array_contains", night))
         elif at is None:
             q = q.where(filter=FieldFilter("state", "==", state))
         items = []

@@ -14,13 +14,13 @@ This API reads results that are already computed; it does not run detection. The
 | `grid` | `GridCompact`: pixels_version, UTC slot, n_sat, status, base64 utility, clusters |
 | `meta` | archive_first YYYY-MM-DD, himawari_slot/gk2a_slot UTC or null, explicit boolean replay |
 | `night` | `NightCompact`: night, pixels_version, 54 slots/status/n_sat, clusters |
-| `clusters` | List of `ClusterDetail`, plus `warning_nights` (list of night ids) |
+| `clusters` | List of `ClusterDetail`, plus `alert_nights` (list of night ids) |
 
 `grid.pixel_n_sat` is an extra 0/1/2 list per pixel needed for GeoJSON. The FE compact format works
 without it. The satellite count of a whole slot must never be claimed as the clear-sky satellite count of every pixel.
 
 All times are `YYYY-MM-DDTHH:MM:SSZ` strings, ordered in UTC. Every number comes from a measured source.
-Compact status codes: `S` = SAFE, `N` = NO_OBSERVATION, `W` = WATCH, `A` = WARNING. `N` always has a null
+Compact status codes: `S` = SAFE, `W` = WARNING, `A` = ALERT, `N` = NO_OBSERVABLE. `N` always has a null
 utility (byte 255); other values are 0..250. PixelIndex.version must match.
 Night slots follow the FE: 13:00–21:50 UTC, 54 slots. Slots not evaluated yet are null.
 `clusters` holds only rule-engine clusters, with attributes, series, neighbours and verification as typed in the FE.
@@ -45,8 +45,8 @@ is for the pipeline team to add.
   immutable objects. Raw/Parquet/crops may stay under the team's planned prefixes; the API never reads them directly.
 - Firestore `api_snapshots/<slot>`: timestamp, n_sat, archive_first, replay, himawari_slot, gk2a_slot,
   pixels_object, grid_object. Queried on the single timestamp field; no composite index needed.
-- `api_nights/<night>`: night, month, has_data, warning_clusters, object, as_of.
-- `clusters/<id>`: current ClusterDetail + warning_nights + observation_at.
+- `api_nights/<night>`: night, month, has_data, alert_clusters, object, as_of.
+- `clusters/<id>`: current ClusterDetail + alert_nights + observation_at.
 - `clusters/<id>/history/<slot>`: timestamp and the full cluster for `as_of` reads.
 - `alerts/<id>`: publish decision and delivery status; `audit_log/<auto-id>`: who decided and when.
 - `notification_recipients`, `notification_inbox`, `notification_jobs`, `notification_devices`,
