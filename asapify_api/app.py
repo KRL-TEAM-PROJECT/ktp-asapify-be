@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
+from .access_routes import router as access_router
 from .auth import require_operator
 from .core import (ApiProblem, DecisionInput, PROVINCES, as_time, check_decidable,
                    date_key, geojson, iso, night_of, night_slots, utc_now, validate_grid)
@@ -208,3 +209,5 @@ app.include_router(operator)
 app.include_router(engine_router)
 
 app.include_router(notification_router)
+
+app.include_router(access_router)

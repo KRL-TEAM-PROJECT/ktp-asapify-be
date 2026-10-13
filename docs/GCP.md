@@ -60,8 +60,8 @@ choose a support email, and add the Hosting domain to Authorized domains. The pr
 account/consent steps. Copy the web configuration into the FE repository's `.env.local` following `.env.example`.
 The web configuration is not an Admin key; never put a bot token or service-account key in `VITE_*`.
 
-After a future operator signs in with Google for the first time (refused until the role is granted), an admin
-checks the email and UID in Firebase Authentication. From a Python environment authenticated with ADC:
+The first operator is set by hand. After that person signs in with Google once (refused until the role is granted),
+an admin checks the email and UID in Firebase Authentication. From a Python environment authenticated with ADC:
 
 ```bash
 gcloud auth application-default login
@@ -70,6 +70,17 @@ python tools/set_operator.py --project "$ASAPIFY_PROJECT_ID" --uid 'VERIFIED_UID
 ```
 
 No email from a chat gets access automatically. The operator signs out and in again to refresh the claim.
+
+After that, operators add teammates on the Regions page (Operator access, `asapify_api/access_routes.py`):
+- An existing, verified Google account becomes an operator at once.
+- Any other address waits in `operator_access` and becomes an operator at its first sign-in; the web app calls
+  `POST /api/v1/access/activate` and refreshes the token.
+- Removing an address drops the claim and revokes that account's sessions. Nobody can remove their own access.
+- Every change is written to `audit_log`.
+
+The API's service account can already read accounts (`roles/firebaseauth.viewer`). Setting the claim and revoking
+sessions also needs `firebaseauth.users.update`: `gcp/access-setup.sh` grants only that, through a custom role
+(`APPLY=1` to run it).
 
 ## 3. Check the API before connecting Hosting
 
