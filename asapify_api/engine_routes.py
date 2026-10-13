@@ -1,13 +1,13 @@
-"""Risk-engine endpoints: region states for operators, and the scheduled tick for the private worker."""
+"""Risk-engine endpoints: region states for operators, and the scheduled cycle for the private worker."""
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
-from asapify_engine.ingest import run_tick
+from asapify_engine.config import Settings
+from asapify_engine.ingest import run_cycle
 from asapify_engine.regions import load_regions
 
 from .auth import require_operator
@@ -20,21 +20,20 @@ router = APIRouter()
 
 
 @lru_cache
-def get_engine_store():
+def get_engine_repo():
     from google.cloud import firestore
 
-    from asapify_engine.store import FirestoreEngineStore
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if not project:
+    from asapify_engine.repo import FirestoreRepo
+    settings = Settings()
+    if not settings.project:
         raise ApiProblem(503, "DATA_NOT_READY", "Data storage is not configured.")
-    db = firestore.Client(project=project, database=os.environ.get("FIRESTORE_DATABASE", "asapify"))
-    return FirestoreEngineStore(db)
+    return FirestoreRepo(firestore.Client(project=settings.project, database=settings.database))
 
 
 @router.get("/api/v1/operator/regions", dependencies=[Depends(require_operator)])
-def regions(store=Depends(get_engine_store)):
-    """Every observation region with its current status; status is null until the first tick reaches it."""
-    states = store.states()
+def regions(repo=Depends(get_engine_repo)):
+    """Every observation region with its current status; status is null until the first cycle reaches it."""
+    states = repo.get_states()
     out = []
     for r in load_regions():
         doc = states.get(r.id, {})
@@ -46,10 +45,10 @@ def regions(store=Depends(get_engine_store)):
 
 
 @router.get("/api/v1/operator/regions/{region_id}", dependencies=[Depends(require_operator)])
-def region(region_id: RegionID, hours: int = Query(72, ge=1, le=240), store=Depends(get_engine_store)):
+def region(region_id: RegionID, hours: int = Query(72, ge=1, le=240), repo=Depends(get_engine_repo)):
     if region_id not in {r.id for r in load_regions()}:
         raise ApiProblem(404, "NOT_FOUND", "Unknown region.")
-    detail = store.region_detail(region_id, hours)
+    detail = repo.region_detail(region_id, hours)
     if detail is None:
         raise ApiProblem(503, "DATA_NOT_READY", "This region has not been processed yet.")
     return detail
@@ -57,6 +56,6 @@ def region(region_id: RegionID, hours: int = Query(72, ge=1, le=240), store=Depe
 
 @router.post("/_internal/engine/tick", dependencies=[Depends(require_worker)])
 def tick(batch: int = Query(10, ge=1, le=100), budget: int = Query(40, ge=5, le=280),
-         store=Depends(get_engine_store)):
-    """`budget` (seconds) must stay below the worker's request timeout; the default fits a 60 s timeout."""
-    return run_tick(store, load_regions(), utc_now(), batch=batch, budget_s=budget)
+         repo=Depends(get_engine_repo)):
+    """`budget` (seconds) must stay below the worker's request timeout (300 s in production)."""
+    return run_cycle(repo, load_regions(), utc_now(), batch=batch, budget_s=budget)
