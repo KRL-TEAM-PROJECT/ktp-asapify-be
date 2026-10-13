@@ -125,10 +125,24 @@ def assess_new_hours(recent: list[Observation], clouds: list[Observation], table
 
 
 class Store(Protocol):
+    def meta(self) -> dict: ...
+    def save_meta(self, doc: dict) -> None: ...
     def states(self) -> dict[str, dict]: ...
     def baseline(self, region_id: str) -> dict | None: ...
     def save_baseline(self, region_id: str, doc: dict) -> None: ...
     def save_region(self, doc: dict, hours: list[dict], transitions: list[dict]) -> None: ...
+
+
+def published_frontier(region: Region, now: datetime, fetch_power: Fetch) -> datetime | None:
+    """Latest hour POWER has published, probed with one request. POWER publishes every cell at once."""
+    today = now.date()
+    raw = fetch_power(region.lat, region.lon, today - timedelta(days=RECENT_DAYS), today)
+    published = [o.observed_at for o in power.canonicalize(raw, now) if o.parameter == "skin_temperature" and o.usable]
+    return max(published) if published else None
+
+
+def _needs_work(doc: dict | None, frontier: datetime) -> bool:
+    return not doc or not doc.get("observed_at") or parse(doc["observed_at"]) < frontier
 
 
 def state_from_doc(doc: dict | None) -> RegionState | None:
@@ -185,15 +199,40 @@ def run_tick(store: Store, regions: Iterable[Region], now: datetime, *, batch: i
              budget_s: float | None = None, clock: Callable[[], float] = time.monotonic,
              fetch_power: Fetch = power.fetch, fetch_cloud: Fetch = openmeteo.fetch,
              cfg: RuleConfig = RuleConfig()) -> dict:
-    """Process the `batch` least recently updated regions, so every region is refreshed every few ticks.
+    """Bring regions up to the latest hour NASA POWER has published.
 
-    With `budget_s`, no new region starts once that many seconds have passed: the request finishes inside
-    the caller's timeout and the remaining regions go first on the next tick.
+    POWER publishes about once a day, so most 15-minute ticks cost one Firestore read and one probe request
+    and stop there. When new hours appear, the `batch` least recently updated regions that are behind are
+    processed. With `budget_s`, no new region starts once that many seconds have passed: the request ends
+    inside the caller's timeout and the remaining regions go first on the next tick.
     """
     started = clock()
+    regions = list(regions)
+    summary = {"frontier": None, "skipped": None, "regions": [], "hours": 0, "transitions": 0,
+               "agent_requests": [], "errors": []}
+    if not regions:
+        return summary
+    meta = store.meta()
+    frontier, failure = None, None
+    for probe in regions[:3]:  # one failing cell must not block the probe
+        try:
+            frontier, failure = published_frontier(probe, now, fetch_power), None
+            break
+        except Exception as exc:
+            failure = exc
+    if failure is not None:  # POWER unreachable: try again on the next tick
+        summary["errors"].append({"region": None, "error": type(failure).__name__})
+        return summary
+    if frontier is None:
+        summary["skipped"] = "power has no published hours"
+        return summary
+    summary["frontier"] = iso(frontier)
+    if meta.get("caught_up") == iso(frontier):
+        summary["skipped"] = "no new hours since the last pass"
+        return summary
     states = store.states()
-    due = sorted(regions, key=lambda r: states.get(r.id, {}).get("updated_at", ""))[:batch]
-    summary = {"regions": [], "hours": 0, "transitions": 0, "agent_requests": [], "errors": []}
+    behind = [r for r in regions if _needs_work(states.get(r.id), frontier)]
+    due = sorted(behind, key=lambda r: states.get(r.id, {}).get("updated_at", ""))[:batch]
     for region in due:
         if budget_s is not None and clock() - started >= budget_s:
             break
@@ -209,4 +248,6 @@ def run_tick(store: Store, regions: Iterable[Region], now: datetime, *, batch: i
         summary["transitions"] += result["transitions"]
         if result["agent_requested"]:
             summary["agent_requests"].append(region.id)
+    if len(summary["regions"]) == len(behind):
+        store.save_meta({"caught_up": iso(frontier), "updated_at": iso(now)})
     return summary

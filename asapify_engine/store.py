@@ -4,6 +4,7 @@ engine_regions/{id}                         current state + latest record (merge
 engine_regions/{id}/hours/{YYYYMMDDHH}      inputs, quality flags, utilities, status and reason for that hour
 engine_regions/{id}/transitions/{YYYYMMDDHH}  status changes only
 engine_baselines/{id}                       cached baseline table, rebuilt about once a week
+engine_meta/ingestion                       latest POWER hour every region has caught up with
 """
 from __future__ import annotations
 
@@ -18,6 +19,13 @@ class FirestoreEngineStore:
     def __init__(self, db: firestore.Client):
         self.db = db
         self.regions = db.collection("engine_regions")
+
+    def meta(self) -> dict:
+        doc = self.db.collection("engine_meta").document("ingestion").get()
+        return doc.to_dict() if doc.exists else {}
+
+    def save_meta(self, doc: dict) -> None:
+        self.db.collection("engine_meta").document("ingestion").set(doc)
 
     def states(self) -> dict[str, dict]:
         return {doc.id: doc.to_dict() for doc in self.regions.stream()}

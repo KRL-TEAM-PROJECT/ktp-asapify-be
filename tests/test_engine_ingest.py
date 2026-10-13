@@ -23,15 +23,15 @@ def hours(start, end):
         t += timedelta(hours=1)
 
 
-def power_fetch(recent_celsius, humidity, calls=None):
-    """History years read 25 °C; the current year reads `recent_celsius`; hours after FRONTIER are unpublished."""
+def power_fetch(recent_celsius, humidity, calls=None, frontier=FRONTIER):
+    """History years read 25 °C; the current year reads `recent_celsius`; hours after `frontier` are unpublished."""
     def fetch(lat, lon, start, end):
         if calls is not None:
             calls.append((lat, start, end))
         ts, rh = {}, {}
         for t in hours(start, end):
             key = f"{t:%Y%m%d%H}"
-            if t.year == NOW.year and t > FRONTIER:
+            if t.year == NOW.year and t > frontier:
                 ts[key] = rh[key] = -999.0
             else:
                 ts[key] = recent_celsius if t.year == NOW.year else 25.0
@@ -51,7 +51,13 @@ def cloud_fetch(cover):
 
 class FakeStore:
     def __init__(self):
-        self.docs, self.baselines, self.hours, self.transitions = {}, {}, {}, {}
+        self.docs, self.baselines, self.hours, self.transitions, self.meta_doc = {}, {}, {}, {}, {}
+
+    def meta(self):
+        return dict(self.meta_doc)
+
+    def save_meta(self, doc):
+        self.meta_doc = dict(doc)
 
     def states(self):
         return {k: dict(v) for k, v in self.docs.items()}
@@ -73,8 +79,8 @@ class FakeStore:
                                          "transitions": self.transitions[region_id][::-1]}
 
 
-def tick(store, celsius=25.5, humidity=80.0, cover=20, batch=2, calls=None, now=NOW):
-    return run_tick(store, REGIONS, now, batch=batch, fetch_power=power_fetch(celsius, humidity, calls),
+def tick(store, celsius=25.5, humidity=80.0, cover=20, batch=2, calls=None, now=NOW, frontier=FRONTIER):
+    return run_tick(store, REGIONS, now, batch=batch, fetch_power=power_fetch(celsius, humidity, calls, frontier),
                     fetch_cloud=cloud_fetch(cover))
 
 
@@ -93,13 +99,18 @@ def test_first_tick_assesses_every_published_hour_and_rotates_regions():
     assert tick(store)["regions"][0] == REGIONS[2].id     # the never-processed region goes next
 
 
-def test_later_ticks_only_add_new_hours_and_reuse_the_baseline():
+def test_idle_ticks_cost_one_probe_and_new_hours_wake_the_next_pass():
     store = FakeStore()
-    tick(store, batch=3)
+    assert tick(store, batch=3)["regions"] == [r.id for r in REGIONS]
+    assert store.meta_doc["caught_up"] == "2026-10-10T23:00:00Z"
     calls = []
-    summary = tick(store, batch=3, calls=calls, now=NOW + timedelta(minutes=15))
-    assert summary["hours"] == 0 and summary["transitions"] == 0
-    assert len(calls) == 3                                 # one recent request per region, no baseline rebuild
+    idle = tick(store, batch=3, calls=calls, now=NOW + timedelta(minutes=15))
+    assert idle["skipped"] and idle["hours"] == 0 and len(calls) == 1   # one probe, nothing else
+    calls = []
+    later = tick(store, batch=3, calls=calls, now=NOW + timedelta(days=1),
+                 frontier=FRONTIER + timedelta(days=1))
+    assert later["hours"] == 3 * 24 and len(calls) == 1 + 3            # probe + one request per region
+    assert store.meta_doc["caught_up"] == "2026-10-11T23:00:00Z"
 
 
 def test_hot_and_dry_region_enters_alert_and_requests_the_agent_once():
