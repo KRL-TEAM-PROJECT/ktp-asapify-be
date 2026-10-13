@@ -5,5 +5,10 @@
 !asapify_api/**
 !asapify_engine/
 !asapify_engine/**
+!asapify_agent/
+!asapify_agent/**
+**/.env
+**/.env.*
+**/.adk/
 **/__pycache__/
 **/*.pyc

@@ -5,6 +5,7 @@ COPY requirements-api.txt .
 RUN pip install --no-cache-dir -r requirements-api.txt && useradd --uid 10001 --create-home app
 COPY asapify_api ./asapify_api
 COPY asapify_engine ./asapify_engine
+COPY asapify_agent ./asapify_agent
 COPY main.py .
 USER app
 EXPOSE 8080

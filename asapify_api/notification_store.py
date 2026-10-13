@@ -98,7 +98,8 @@ class NotificationStore:
         """
         alert_ref = self.db.collection('alerts').document(alert_id)
         alert = alert_ref.get().to_dict()
-        payload = {'id': alert['id'], 'cluster_id': alert['cluster_id'], 'province': str(alert['province']),
+        payload = {'id': alert['id'], 'cluster_id': alert.get('cluster_id'), 'region_id': alert.get('region_id'),
+                   'province': str(alert['province']),
                    'text': alert['caption'], 'purpose': alert['purpose'], 'published_at': alert['published_at'],
                    'expires_at': alert['expires_at'], 'status': alert['status']}
         query = self.db.collection('notification_recipients').where(
@@ -122,7 +123,10 @@ class NotificationStore:
         summary = {'state': 'outbox_saved' if recipients else 'no_recipients', 'recipients': recipients, 'jobs': jobs}
         batch = self.db.batch()
         batch.update(alert_ref, {'fanout': 'done', 'notifications': summary})
-        batch.update(self.db.collection('clusters').document(alert['cluster_id']), {'decision.notifications': summary})
+        # Region alerts point at their verification document; cluster alerts at the cluster.
+        source = (self.db.document(alert['source_path']) if alert.get('source_path')
+                  else self.db.collection('clusters').document(alert['cluster_id']))
+        batch.update(source, {'decision.notifications': summary})
         batch.commit()
         return summary
 

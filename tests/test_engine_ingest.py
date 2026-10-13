@@ -259,6 +259,7 @@ def api():
 def test_region_endpoints_require_an_operator(api):
     c = TestClient(app, raise_server_exceptions=False)
     assert c.get("/api/v1/operator/regions").status_code == 401
+    assert c.post(f"/api/v1/operator/regions/{load_regions()[0].id}/verify").status_code == 401
     assert c.post("/_internal/engine/tick").status_code in (401, 503)   # worker identity only
 
 
