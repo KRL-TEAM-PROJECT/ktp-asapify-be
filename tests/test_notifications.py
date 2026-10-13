@@ -24,7 +24,7 @@ CLUSTER = {'id': 'C-test', 'province': '62', 'replay': True}
 
 
 def planned(purpose='exercise'):
-    alert = alert_payload({**CLUSTER, 'replay': purpose == 'exercise'}, '<b>AWAS</b> indikasi anomali.', NOW)
+    alert = alert_payload({**CLUSTER, 'replay': purpose == 'exercise'}, '<b>WARNING</b> anomaly indication.', NOW)
     return plan_recipient(alert, copy.deepcopy(PROFILE), NOW)
 
 
@@ -46,7 +46,7 @@ def test_one_push_transport_and_stable_nonduplicated_job_ids():
 
 @pytest.mark.parametrize('change', [{'consent': False}, {'provinces': ['11']}, {'exercises': False}])
 def test_consent_region_and_exercise_opt_out(change):
-    assert plan_recipient(alert_payload(CLUSTER, 'SIMULASI', NOW), {**PROFILE, **change}, NOW) == (None, [])
+    assert plan_recipient(alert_payload(CLUSTER, 'EXERCISE', NOW), {**PROFILE, **change}, NOW) == (None, [])
 
 
 def test_future_adapters_blocked_and_escalation_due_time():
@@ -120,7 +120,7 @@ def test_telegram_acceptance_is_not_delivery_and_uses_lightweight_text(monkeypat
     inbox, jobs = planned()
     assert send(jobs[0], inbox, PROFILE)['status'] == 'accepted'
     body = post.call_args.kwargs['json']
-    assert body['text'].startswith('[SIMULASI]') and '<b>' not in body['text']
+    assert body['text'].startswith('[EXERCISE]') and '<b>' not in body['text']
     assert 'photo' not in body and 'parse_mode' not in body and inbox['acknowledged_at'] is None
 
 
@@ -228,7 +228,7 @@ def test_ack_is_owner_scoped_and_idempotent(monkeypatch):
 
 def test_unlinked_telegram_does_not_turn_into_arbitrary_target():
     profile = {**PROFILE, 'telegram_chat_id': None}
-    _, jobs = plan_recipient(alert_payload(CLUSTER, 'SIMULASI', NOW), profile, NOW)
+    _, jobs = plan_recipient(alert_payload(CLUSTER, 'EXERCISE', NOW), profile, NOW)
     assert next(j for j in jobs if j['channel'] == 'telegram')['error'] == 'TELEGRAM_NOT_LINKED'
 
 
@@ -351,7 +351,7 @@ class FakeDB:
 
 def fanout_db(subscribers):
     db = FakeDB()
-    db.docs['alerts/A-test'] = {'id': 'A-test', 'cluster_id': 'C-test', 'province': '62', 'caption_id': '<b>AWAS</b>',
+    db.docs['alerts/A-test'] = {'id': 'A-test', 'cluster_id': 'C-test', 'province': '62', 'caption': '<b>WARNING</b>',
                                 'purpose': 'emergency', 'published_at': NOW, 'expires_at': '2026-10-09T00:00:00Z',
                                 'status': 'active', 'fanout': 'pending'}
     db.docs['clusters/C-test'] = {'id': 'C-test', 'decision': {'action': 'publish', 'notifications': {'state': 'fanout_pending'}}}

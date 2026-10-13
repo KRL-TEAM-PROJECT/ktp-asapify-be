@@ -12,9 +12,9 @@ from pyproj import Transformer
 
 from models import ThermalObs
 
-CellCoords = Mapping[str, tuple[float, float]]  # cell_id -> (lon, lat) titik tengah cell
+CellCoords = Mapping[str, tuple[float, float]]  # cell_id -> (lon, lat) of the cell centre
 
-BT_MIN_K, BT_MAX_K = 180.0, 350.0  # di luar rentang ini = fill value / piksel rusak
+BT_MIN_K, BT_MAX_K = 180.0, 350.0  # outside this range = fill value / bad pixel
 
 
 class ThermalSource(Protocol):
@@ -26,7 +26,7 @@ def _as_utc(ts: datetime) -> datetime:
 
 
 def _solar_elevation_deg(ts_utc: datetime, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
-    """Aproksimasi NOAA (akurasi ~0.5 derajat), cukup untuk memutuskan siang/malam."""
+    """NOAA approximation (~0.5 degree accuracy), enough to decide day/night."""
     hour = ts_utc.hour + ts_utc.minute / 60 + ts_utc.second / 3600
     g = 2 * math.pi / 365 * (ts_utc.timetuple().tm_yday - 1 + (hour - 12) / 24)
     eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
@@ -34,7 +34,7 @@ def _solar_elevation_deg(ts_utc: datetime, lat: np.ndarray, lon: np.ndarray) -> 
     decl = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g)
             - 0.006758 * math.cos(2 * g) + 0.000907 * math.sin(2 * g)
             - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
-    tst = hour * 60 + eqtime + 4 * lon               # true solar time (menit)
+    tst = hour * 60 + eqtime + 4 * lon               # true solar time (minutes)
     ha = np.radians(tst / 4 - 180)                   # hour angle
     lat_r = np.radians(lat)
     sin_el = np.sin(lat_r) * math.sin(decl) + np.cos(lat_r) * math.cos(decl) * np.cos(ha)
@@ -42,13 +42,13 @@ def _solar_elevation_deg(ts_utc: datetime, lat: np.ndarray, lon: np.ndarray) -> 
 
 
 class HimawariSource:
-    """value = ΔBT = BT(B07) - BT(B13) per cell, satu timestep."""
+    """value = ΔBT = BT(B07) - BT(B13) per cell, one timestep."""
 
     def __init__(self, cells: CellCoords, *, cloud_bt_k: float = 285.0,
                  night_sun_elev_deg: float = -6.0) -> None:
         self._cells = cells
-        self._cloud_bt_k = cloud_bt_k          # placeholder, harus dituning dari data
-        self._night_elev = night_sun_elev_deg  # civil twilight: B07 bebas pantulan matahari
+        self._cloud_bt_k = cloud_bt_k          # placeholder, must be tuned from data
+        self._night_elev = night_sun_elev_deg  # civil twilight: B07 free of reflected sunlight
         self._hima = Himawari(region="F", bands=("B07", "B13"))
         self._to_geos: Transformer | None = None
         self._h: float | None = None
@@ -59,12 +59,12 @@ class HimawariSource:
         ts_utc = _as_utc(ts)
         lon, lat = self._lonlat(cell_ids)
 
-        # 1) scene full disk (lazy/dask); 2) lon/lat -> sudut pandang satelit
+        # 1) scene full disk (lazy/dask); 2) lon/lat -> satellite view angle
         da = self._hima.get(ts_utc.strftime("%Y-%m-%dT%H:%M:%S"))
         x, y = self._project(da, lon, lat)
         on_disk = np.isfinite(x) & np.isfinite(y)
 
-        # 3) piksel terdekat per cell (tanpa averaging, sesuai "cell = piksel")
+        # 3) nearest pixel per cell (no averaging, per "cell = pixel")
         b07 = np.full(len(cell_ids), np.nan)
         b13 = np.full(len(cell_ids), np.nan)
         if on_disk.any():
@@ -76,7 +76,7 @@ class HimawariSource:
             b07[on_disk] = pts.sel(band_id=7).values
             b13[on_disk] = pts.sel(band_id=13).values
 
-        # 4) validitas: finite, rentang fisik, dan tidak berawan (B13 dingin = awan)
+        # 4) validity: finite, physical range, and not cloudy (cold B13 = cloud)
         with np.errstate(invalid="ignore"):
             valid = (
                 np.isfinite(b07) & np.isfinite(b13)
@@ -86,7 +86,7 @@ class HimawariSource:
             )
         delta = np.where(valid, b07 - b13, np.nan)
 
-        # 5) malam/siang dari elevasi matahari (dihitung untuk SEMUA cell, termasuk yang berawan)
+        # 5) night/day from solar elevation (computed for ALL cells, including cloudy ones)
         night = _solar_elevation_deg(ts_utc, lat, lon) < self._night_elev
 
         return [
@@ -97,42 +97,42 @@ class HimawariSource:
     def _lonlat(self, cell_ids: list[str]) -> tuple[np.ndarray, np.ndarray]:
         missing = [c for c in cell_ids if c not in self._cells]
         if missing:
-            raise KeyError(f"cell tidak punya koordinat: {missing[:5]}")
+            raise KeyError(f"cells without coordinates: {missing[:5]}")
         arr = np.array([self._cells[c] for c in cell_ids], dtype=float)
         return arr[:, 0], arr[:, 1]
 
     def _project(self, da: xr.DataArray, lon: np.ndarray, lat: np.ndarray):
         if self._to_geos is None:
-            crs = da.attrs["crs"]  # proj string geostationary dari metadata
+            crs = da.attrs["crs"]  # geostationary proj string from metadata
             self._to_geos = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
             m = re.search(r"\+h=([\d.]+)", crs)
             if m is None:
-                raise ValueError(f"CRS Himawari tidak punya parameter +h: {crs}")
+                raise ValueError(f"Himawari CRS has no +h parameter: {crs}")
             self._h = float(m.group(1))
         with np.errstate(all="ignore"):
             xm, ym = self._to_geos.transform(lon, lat)
-        # koordinat x,y di DataArray dalam radian (scan angle) = meter / tinggi satelit
+        # x,y coordinates in the DataArray are radians (scan angle) = metres / satellite height
         return np.asarray(xm, float) / self._h, np.asarray(ym, float) / self._h
 
 
 if __name__ == "__main__":
-    # Cek manual peat cell: `python himawari.py` dari folder pipeline/. Tidak jalan saat modul di-import.
+    # Manual peat-cell check: run `python himawari.py` from pipeline/. Never runs on import.
     import geopandas as gpd
     import matplotlib.pyplot as plt
 
     from peat_mask import build_cells, peat_fraction
 
-    # koordinat x/y statis, jadi satu band cukup (lebih ringan diunduh)
+    # x/y coordinates are static, so one band is enough (lighter to download)
     scene = Himawari(region="F", bands=("B13",)).get("2026-09-28T17:00:00")
 
     cells = build_cells(scene, bbox=(108.0, -4.5, 119.5, 7.5))
-    peat = gpd.read_file("assets/SUMBER DAYA ALAM DAN LINGKUNGAN - Peta Kesatuan Hidrologis Gambut.shp")   # ganti path-nya
+    peat = gpd.read_file("assets/khg_peat_hydrological_units.shp")   # adjust the path if needed
     peat_cells = peat_fraction(cells, peat, min_fraction=0.5)
 
-    print(len(cells), "piksel di bbox ->", len(peat_cells), "cell gambut")
+    print(len(cells), "pixels in bbox ->", len(peat_cells), "peat cells")
     print(peat_cells["peat_fraction"].describe())
 
     fig, ax = plt.subplots(figsize=(8, 8))
     peat.to_crs(4326).plot(ax=ax, color="lightgrey")
     peat_cells.sample(min(500, len(peat_cells))).plot(ax=ax, color="red")
-    fig.savefig("cek_peat_cells.png", dpi=150)
+    fig.savefig("check_peat_cells.png", dpi=150)

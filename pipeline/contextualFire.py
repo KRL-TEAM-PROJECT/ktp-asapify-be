@@ -1,21 +1,21 @@
-"""Skoring anomali termal kontekstual untuk smoldering gambut.
+"""Contextual thermal anomaly scoring for smouldering peat.
 
-Mekanisme (lihat diskusi tim untuk detail fisiknya):
-  1. delta_bt        : BT band7 (~3.9um, sensitif sumber kecil-panas) minus BT band13
-                        (~10.4um, mendekati rata-rata linear). Delta besar = ada sumber
-                        panas kecil di piksel, bukan pemanasan permukaan yang merata.
-  2. robust_z         : delta itu dinilai relatif ke riwayat piksel itu sendiri
-                        (median/MAD per jam & bulan), bukan threshold absolut. Ini yang
-                        membuat threshold otomatis menyesuaikan musim & siang/malam.
-  3. neighbor_support  : fraksi piksel tetangga yang juga anomali di waktu sama.
-                        Membedakan cluster (lebih meyakinkan) dari satu piksel nyala
-                        sendirian (lebih mencurigakan sebagai noise sensor).
-  4. night_streak      : anomali malam yang bertahan beberapa hari berturut-turut,
-                        karena smoldering merambat lambat dan bertahan lama.
+Mechanism (see the team discussion for the physics):
+  1. delta_bt        : BT band7 (~3.9um, sensitive to small hot sources) minus BT band13
+                        (~10.4um, close to the linear average). A large delta = a small
+                        hot source in the pixel, not uniform surface heating.
+  2. robust_z         : that delta is scored against the pixel's own history
+                        (median/MAD per hour & month), not an absolute threshold. This is
+                        what makes the threshold adapt to season and day/night.
+  3. neighbor_support  : fraction of neighbouring pixels anomalous at the same time.
+                        Separates a cluster (more convincing) from a single lit pixel
+                        on its own (more likely sensor noise).
+  4. night_streak      : night anomalies that persist for several consecutive days,
+                        because smouldering spreads slowly and lasts long.
 
-Semua angka di ContextualFireConfig adalah HIPOTESIS awal, belum tervalidasi -> kalibrasi
-lewat backtest. Kelas ini murni komputasi (tanpa I/O): baseline dan data tetangga dipasok
-oleh caller (Repo), supaya gampang di-unit-test dan tidak terikat ke Postgres/S3 tertentu.
+Every number in ContextualFireConfig is an initial HYPOTHESIS, not validated -> calibrate
+through backtests. This class is pure computation (no I/O): the caller (Repo) supplies the
+baseline and neighbour data, so it is easy to unit-test and not tied to one Postgres/S3.
 """
 from __future__ import annotations
 
@@ -25,17 +25,17 @@ from typing import Literal
 
 import numpy as np
 
-from config import WIB
+from config import UTC_PLUS_7
 
-MAD_SCALE = 1.4826  # membuat MAD sebanding dengan std untuk data terdistribusi normal
+MAD_SCALE = 1.4826  # makes MAD comparable to the std for normally distributed data
 
 Status = Literal["no_observation", "normal", "watch", "triggered"]
 
 
 @dataclass(frozen=True)
 class BandObs:
-    """Satu timestep BT band7 & band13 untuk satu cell. value None = piksel berawan /
-    tidak ada observasi valid (BUKAN 0, supaya tidak disalahartikan sebagai 'dingin')."""
+    """One BT band7 & band13 timestep for one cell. value None = cloudy pixel /
+    no valid observation (NOT 0, so it is never mistaken for 'cold')."""
     ts: datetime          # UTC, tz-aware
     bt_b07: float | None
     bt_b13: float | None
@@ -52,8 +52,8 @@ class BandObs:
 class ContextualScore:
     cell_id: str
     ts: datetime
-    delta_z: float | None            # seberapa ekstrem delta dibanding baseline cell ini
-    neighbor_support: float | None   # fraksi tetangga yang ikut anomali; None = tidak dicek
+    delta_z: float | None            # how extreme the delta is versus this cell's baseline
+    neighbor_support: float | None   # fraction of neighbours also anomalous; None = not checked
     night_streak: int
     status: Status
 
@@ -64,13 +64,13 @@ class ContextualFireConfig:
     z_trigger: float = 4.0
     min_baseline_samples: int = 30
     night_streak_trigger: int = 3
-    max_night_gap_days: int = 2          # celah antar malam valid yg masih dianggap berurutan
-    neighbor_support_min: float = 0.0    # 0 = koherensi spasial tidak wajib untuk trigger
-    neighbor_z_threshold: float = 2.0    # tetangga dianggap "ikut anomali" jika z >= ini
+    max_night_gap_days: int = 2          # gap between valid nights still counted as consecutive
+    neighbor_support_min: float = 0.0    # 0 = spatial coherence not required to trigger
+    neighbor_z_threshold: float = 2.0    # a neighbour counts as "also anomalous" if z >= this
 
 
 class ContextualFireScorer:
-    """Pure computation. Tidak menyentuh DB/S3 sama sekali."""
+    """Pure computation. Never touches DB/S3."""
 
     def __init__(self, cfg: ContextualFireConfig = ContextualFireConfig()) -> None:
         self.cfg = cfg
@@ -84,17 +84,17 @@ class ContextualFireScorer:
     def robust_z(value: float, baseline: list[float], min_samples: int) -> float | None:
         b = np.asarray([x for x in baseline if x is not None], dtype=float)
         if b.size < min_samples:
-            return None                     # baseline belum cukup: jangan menilai
+            return None                     # baseline too short: do not score
         med = float(np.median(b))
         mad = float(np.median(np.abs(b - med))) * MAD_SCALE
         if mad < 1e-6:
-            return None                     # baseline datar: z tidak bermakna
+            return None                     # flat baseline: z is meaningless
         return (value - med) / mad
 
     def neighbor_support(
         self, neighbor_deltas: list[float], neighbor_baseline: list[float]
     ) -> float | None:
-        """Fraksi piksel tetangga yang deltanya juga >= neighbor_z_threshold pada waktu sama."""
+        """Fraction of neighbouring pixels whose delta is also >= neighbor_z_threshold at the same time."""
         if not neighbor_deltas:
             return None
         zs = [
@@ -109,13 +109,13 @@ class ContextualFireScorer:
 
     @staticmethod
     def _night_key(ts: datetime) -> date:
-        """Satu 'malam' (18:00-06:00 WIB) dikunci ke tanggal sore harinya.
-        TODO: ganti ke sudut matahari untuk produksi."""
-        return (ts.astimezone(WIB) - timedelta(hours=12)).date()
+        """One 'night' (18:00-06:00 UTC+7) is keyed to the date of its evening.
+        TODO: switch to solar elevation for production."""
+        return (ts.astimezone(UTC_PLUS_7) - timedelta(hours=12)).date()
 
     def night_streak(self, nightly_z: dict[date, float]) -> int:
-        """Malam valid berurutan dengan z >= z_watch, dari yang terbaru. Malam tanpa
-        observasi valid (awan) tidak ada di `nightly_z`, jadi dilewati, bukan memutus."""
+        """Consecutive valid nights with z >= z_watch, newest first. Nights without a
+        valid observation (cloud) are absent from `nightly_z`, so they are skipped, not a break."""
         streak, prev = 0, None
         for d in sorted(nightly_z, reverse=True):
             if prev is not None and (prev - d).days > self.cfg.max_night_gap_days:

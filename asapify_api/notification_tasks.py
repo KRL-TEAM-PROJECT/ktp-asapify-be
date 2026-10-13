@@ -17,15 +17,15 @@ def require_worker(authorization: str | None = Header(default=None)):
     expected = os.getenv('NOTIFICATION_TASK_CALLER')
     audience = os.getenv('NOTIFICATION_WORKER_URL', '').rstrip('/')
     if not expected or not audience:
-        raise ApiProblem(503, 'WORKER_NOT_CONFIGURED', 'Identitas worker belum dikonfigurasi.')
+        raise ApiProblem(503, 'WORKER_NOT_CONFIGURED', 'The worker identity is not configured.')
     if not authorization or not authorization.startswith('Bearer '):
-        raise ApiProblem(401, 'UNAUTHENTICATED', 'Token worker diperlukan.')
+        raise ApiProblem(401, 'UNAUTHENTICATED', 'A worker token is required.')
     try:
         claims = id_token.verify_oauth2_token(authorization[7:], GoogleRequest(), audience=audience)
     except Exception:
-        raise ApiProblem(401, 'UNAUTHENTICATED', 'Token worker tidak sah.')
+        raise ApiProblem(401, 'UNAUTHENTICATED', 'Invalid worker token.')
     if claims.get('email') != expected or claims.get('email_verified') is not True or claims.get('iss') not in ('accounts.google.com', 'https://accounts.google.com'):
-        raise ApiProblem(403, 'FORBIDDEN', 'Identitas pemanggil worker tidak sesuai.')
+        raise ApiProblem(403, 'FORBIDDEN', 'The worker caller identity does not match.')
 
 
 class CloudTasks:
@@ -36,7 +36,7 @@ class CloudTasks:
         region = os.getenv('NOTIFICATION_TASK_REGION', 'asia-southeast2')
         queue = os.getenv('NOTIFICATION_TASK_QUEUE', 'asapify-notifications')
         if not project or not self.origin.startswith('https://') or not self.caller:
-            raise ApiProblem(503, 'QUEUE_NOT_CONFIGURED', 'Antrean notifikasi belum dikonfigurasi.')
+            raise ApiProblem(503, 'QUEUE_NOT_CONFIGURED', 'The notification queue is not configured.')
         self.parent = f'projects/{project}/locations/{region}/queues/{queue}'
         creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
         self.session = AuthorizedSession(creds)
@@ -51,7 +51,7 @@ class CloudTasks:
                                      'body': base64.b64encode(json.dumps({'job_id': job['id']}).encode()).decode(),
                                      'oidcToken': {'serviceAccountEmail': self.caller, 'audience': self.origin}}}}, timeout=15)
         if response.status_code not in (200, 201, 409):
-            raise ApiProblem(503, 'QUEUE_UNAVAILABLE', 'Antrean belum menerima tugas; outbox tersimpan.')
+            raise ApiProblem(503, 'QUEUE_UNAVAILABLE', 'The queue did not accept the job; the outbox is saved.')
 
 
 @lru_cache

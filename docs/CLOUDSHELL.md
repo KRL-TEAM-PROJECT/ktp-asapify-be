@@ -1,29 +1,30 @@
-# Deployment ASAPify melalui Cloud Shell
+# Deploying ASAPify from Cloud Shell
 
-Target tetap: project `hack2skill-510921`, region Jakarta `asia-southeast2`, database `asapify`.
-Runner mengerjakan API, worker, antrean, indeks dan recovery scheduler. Notifikasi tetap `dry_run`;
-Telegram dan FCM dinonaktifkan. Pipeline satelit/AI belum diimplementasikan oleh deployment ini.
+Fixed target: project `hack2skill-510921`, Jakarta region `asia-southeast2`, database `asapify`.
+The runner handles the API, worker, queue, indexes and the recovery scheduler. Notifications stay `dry_run`;
+Telegram and FCM are disabled. This deployment does not implement the satellite/AI pipeline.
 
-## Status 12 Oktober 2026
+## Status, 13 October 2026
 
-- 9 Okt: Fitroh menjalankan tahap `backend` dan menyiapkan Hosting. API, worker, antrean, tiga indeks
-  dan jadwal sweep aktif. FE di-deploy lewat GitHub Actions repo FE (lihat `docs/GCP.md` repo FE).
-- 12 Okt: image API dan worker diganti ke `main` `c55a14c` (tag `fix-20261012-113615`) dengan cara
-  "Update image saja" di bawah. Mode tetap `dry_run`; Telegram dan FCM tetap mati.
-- Belum: rules Firestore belum pernah di-release, Secret Manager kosong (bot Telegram belum dipasang),
-  dan bucket data masih kosong sehingga peta live menampilkan `DATA_NOT_READY`.
+- 9 Oct: Fitroh ran the `backend` stage and set up Hosting. The API, worker, queue, three indexes and the
+  sweep schedule are live. The FE is deployed by GitHub Actions in the FE repo (see `docs/GCP.md` there).
+- 12 Oct: the API and worker image was replaced with `main` `c55a14c` (tag `fix-20261012-113615`) using
+  "Image-only update" below. Mode stayed `dry_run`; Telegram and FCM stayed off.
+- 13 Oct: automatic deployment is active (see "Automatic deployment" below); first run deployed `gh-dfc52e1`.
+- Not done yet: Firestore rules were never released, Secret Manager is empty (no Telegram bot yet),
+  and the data bucket is empty, so the live map shows `DATA_NOT_READY`.
 
-## 1. Buka Cloud Shell dan ambil source
+## 1. Open Cloud Shell and get the source
 
-Di Google Cloud Console, pilih `hack2skill-510921`, lalu buka Cloud Shell. Gunakan akun yang sudah
-berwenang mengelola project dan setujui otorisasi Cloud Shell ketika diminta. Billing harus sudah aktif;
-runner tidak membuat akun billing atau mengubah budget. Resource yang dibuat bisa menimbulkan biaya.
+In the Google Cloud Console, select `hack2skill-510921` and open Cloud Shell. Use an account allowed to
+manage the project and accept the Cloud Shell authorisation when asked. Billing must already be active;
+the runner never creates a billing account or changes budgets. The resources it creates may cost money.
 
-Clone kedua repo privat menggunakan akun GitHub yang mempunyai akses. Bila `gh` tersedia, login lewat
-`gh auth login --hostname github.com --git-protocol https --web`, lalu jalankan `gh auth setup-git`.
-Jangan menaruh token GitHub, kode login, password, atau service-account key ke chat maupun commit.
+Clone both private repositories with a GitHub account that has access. If `gh` is available, sign in with
+`gh auth login --hostname github.com --git-protocol https --web`, then run `gh auth setup-git`.
+Never put a GitHub token, sign-in code, password or service-account key in a chat or a commit.
 
-Jalankan dari direktori baru agar checkout pekerjaan yang sudah ada tidak tertimpa:
+Run from a new directory so an existing working checkout is not overwritten:
 
 ```bash
 git clone https://github.com/KRL-TEAM-PROJECT/ktp-asapify-be.git
@@ -31,37 +32,37 @@ git clone https://github.com/KRL-TEAM-PROJECT/ktp-asapify-fe.git
 cd ktp-asapify-be
 ```
 
-Deploy hanya dari `main` yang sudah di-review. Catat `git rev-parse HEAD` di kedua checkout sebelum deploy.
+Deploy only reviewed `main`. Record `git rev-parse HEAD` in both checkouts before deploying.
 
-## 2. Deploy backend
+## 2. Deploy the backend
 
 ```bash
 python3 -m gcp.cloudshell backend
 python3 -m gcp.cloudshell backend --apply
 ```
 
-Tanpa `--apply`, runner hanya mencetak rencana. Dengan `--apply`, runner:
+Without `--apply`, the runner only prints the plan. With `--apply`, the runner:
 
-1. Memeriksa akun aktif, project, dan billing.
-2. Menyiapkan resource dan service account dari `gcp/manage.py` serta `gcp/notifications.py`.
-3. Menambahkan tiga indeks Firestore yang belum ada tanpa menghapus indeks lain, lalu menunggu READY.
-4. Build image dengan tag waktu unik, deploy API dan worker, dan memasang recovery scheduler.
-5. Memeriksa kedua service Ready dan semua flag mode uji, health API 200, akses operator tanpa token
-   Firebase 401, serta akses anonim ke worker ditolak.
+1. Checks the active account, the project and billing.
+2. Prepares resources and service accounts from `gcp/manage.py` and `gcp/notifications.py`.
+3. Adds the three missing Firestore indexes without deleting other indexes, then waits for READY.
+4. Builds an image with a unique time tag, deploys the API and worker, and installs the recovery scheduler.
+5. Checks that both services are Ready with every test-mode flag, API health 200, operator access without a
+   Firebase token 401, and anonymous worker access denied.
 
-Backend tetap privat pada lapisan IAM sampai tahap Hosting. Pemeriksaan memakai token gcloud berumur
-pendek di memori, bukan key JSON atau token yang dicetak. Akun deploy perlu izin memanggil layanan tersebut.
-Resource yang berhasil dibuat tetap ada jika langkah berikutnya gagal; tidak ada rollback destruktif otomatis.
-Setelah masalah diperbaiki, runner dapat dijalankan ulang. Gunakan `--version TAG_UNIK` jika ingin menetapkan tag.
+The backend stays private at the IAM layer until the Hosting stage. Checks use a short-lived gcloud token held
+in memory, never a JSON key or a printed token. The deploying account needs permission to invoke the services.
+Resources already created are kept if a later step fails; there is no automatic destructive rollback.
+After fixing the problem, the runner can be run again. Use `--version UNIQUE_TAG` to choose the tag.
 
-**Menjalankan ulang tahap ini pada project yang sudah live** butuh peran Owner (langkah izin IAM), menutup lagi
-akses publik API (`--no-allow-unauthenticated`) sehingga tahap `hosting` harus dijalankan ulang, dan
-mengembalikan mode ke `dry_run`. Untuk sekadar memperbarui kode, pakai cara di bawah.
+**Rerunning this stage on a live project** needs the Owner role (IAM steps), makes the API private again
+(`--no-allow-unauthenticated`) so the `hosting` stage must be rerun, and resets the mode to `dry_run`.
+To only update the code, use the method below.
 
-### Update image saja (cukup peran Editor)
+### Image-only update (Editor role is enough)
 
-Build dari `main` lalu ganti image pada kedua layanan. Env, akun layanan, izin, akses publik API, worker
-privat dan jadwal tidak berubah.
+Build from `main`, then swap the image on both services. Env vars, service accounts, IAM, public API access,
+the private worker and the schedule stay unchanged.
 
 ```bash
 P=hack2skill-510921; R=asia-southeast2; TAG="fix-$(date -u +%Y%m%d-%H%M%S)"
@@ -72,99 +73,99 @@ gcloud builds submit . --project=$P --region=$R --tag="$IMG" \
 for s in asapify-api asapify-notify; do
   gcloud run services update $s --project=$P --region=$R --image="$IMG" --update-env-vars="ASAPIFY_VERSION=$TAG"
 done
-curl -s https://hack2skill-510921.web.app/api/v1/health   # version harus sama dengan $TAG
+curl -s https://hack2skill-510921.web.app/api/v1/health   # version must equal $TAG
 ```
 
-Rollback: jalankan `gcloud run services update` yang sama dengan tag image sebelumnya.
+Rollback: run the same `gcloud run services update` with the previous image tag.
 
-### Deploy otomatis (GitHub Actions)
+### Automatic deployment (GitHub Actions)
 
-`.github/workflows/deploy-backend.yml` menjalankan cara "Update image saja" di atas setiap kali `main`
-berubah pada `asapify_api/`, `main.py`, `Dockerfile` atau `requirements-api.txt` (juga bisa manual lewat
-`workflow_dispatch`). Urutannya: test → build dan push image `gh-<sha7>` → ganti image kedua layanan →
-uji asap lewat Hosting (versi health = tag baru, endpoint operator tanpa token = 401) → bila gagal,
-kembali otomatis ke image sebelumnya. Env, mode `dry_run`/`live`, izin dan jadwal tidak disentuh.
+`.github/workflows/deploy-backend.yml` runs the image-only update above whenever `main` changes in
+`asapify_api/`, `main.py`, `Dockerfile` or `requirements-api.txt` (it can also be started manually with
+`workflow_dispatch`). Order: tests → build and push image `gh-<sha7>` → swap the image on both services →
+smoke test through Hosting (health version = new tag, operator endpoint without a token = 401) → on failure,
+automatic return to the previous image. Env vars, `dry_run`/`live` mode, IAM and the schedule are untouched.
 
-Sebelum pertama kali berjalan, Owner menjalankan sekali dari Cloud Shell (cetak rencana dulu):
+Before the first run, an Owner runs this once from Cloud Shell (print the plan first):
 
 ```bash
 bash gcp/github-deployer.sh
 APPLY=1 bash gcp/github-deployer.sh
 ```
 
-Skrip itu membuat akun `asapify-be-deployer` tanpa file kunci, menambahkan repo BE ke penyedia OIDC
-GitHub yang sudah dipakai FE, dan memberi akun itu hak push ke repositori image `asapify` serta hak
-update hanya pada `asapify-api` dan `asapify-notify`. Karena `main` langsung live, aktifkan branch
-protection: perubahan lewat PR dan test wajib lulus. Pasang juga kebijakan simpan image di Artifact
-Registry, karena setiap deploy menambah satu image.
+The script creates a keyless `asapify-be-deployer` account, adds the BE repository to the GitHub OIDC provider
+the FE already uses, and gives that account push rights on the `asapify` image repository plus update rights on
+`asapify-api` and `asapify-notify` only. Because `main` goes live directly, enable branch protection:
+changes through PRs with passing tests. Also set an image retention policy in Artifact Registry, because every
+deploy adds an image.
 
-## 3. Siapkan Firebase dan deploy Hosting
+## 3. Set up Firebase and deploy Hosting
 
-Tambahkan Firebase ke **project yang sama**, daftarkan Web App, aktifkan provider Google dan tambahkan
-`hack2skill-510921.web.app` ke Authorized domains. Jika ada persetujuan/ketentuan layanan, pemilik akun
-menyelesaikannya di konsol. Gunakan Node.js >=22.12 dan Firebase CLI resmi:
+Add Firebase to the **same project**, register a Web App, enable the Google provider and add
+`hack2skill-510921.web.app` to Authorized domains. If terms of service need accepting, the account owner does it
+in the console. Use Node.js >=22.12 and the official Firebase CLI:
 
 ```bash
 npm install -g firebase-tools
 firebase login --no-localhost
 ```
 
-Jika CLI sudah terautentikasi atau menggunakan ADC, login ulang tidak diperlukan. Ikuti login di browser;
-jangan membagikan nilai autentikasi. Isi `ktp-asapify-fe/.env.production.local` dari Web App tersebut:
+If the CLI is already authenticated or uses ADC, signing in again is not needed. Follow the browser sign-in;
+never share authentication values. Fill `ktp-asapify-fe/.env.production.local` from that Web App:
 
 ```dotenv
 VITE_API_MODE=live
 VITE_API_BASE=
-VITE_FIREBASE_API_KEY=SALIN_DARI_WEB_APP
+VITE_FIREBASE_API_KEY=COPY_FROM_WEB_APP
 VITE_FIREBASE_AUTH_DOMAIN=hack2skill-510921.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=hack2skill-510921
-VITE_FIREBASE_APP_ID=SALIN_DARI_WEB_APP
+VITE_FIREBASE_APP_ID=COPY_FROM_WEB_APP
 VITE_FIREBASE_MESSAGING_SENDER_ID=950889990251
 VITE_FIREBASE_VAPID_KEY=
 VITE_PROVINCES_LAYER_URL=/mock/provinces.geojson
 ```
 
-Gunakan `authDomain` yang benar-benar diberikan konfigurasi Firebase jika berbeda. VAPID boleh kosong
-selama push masih nonaktif. Konfigurasi web adalah identifier publik, bukan kredensial Admin.
-Simpan konfigurasi lokal ini di luar git. Lihat juga `docs/GCP.md` di repo frontend.
+Use the `authDomain` the Firebase config actually gives if it differs. VAPID may stay empty while push is
+disabled. The web configuration is a public identifier, not an Admin credential.
+Keep this local configuration out of git. See also `docs/GCP.md` in the frontend repository.
 
-Dari root repo backend:
+From the backend repository root:
 
 ```bash
 python3 -m gcp.cloudshell hosting --frontend ../ktp-asapify-fe
 python3 -m gcp.cloudshell hosting --frontend ../ktp-asapify-fe --apply
 ```
 
-Tahap ini memeriksa konfigurasi, membangun frontend dalam mode live, memeriksa backend, memasang rules
-deny-all hanya pada database `asapify`, memberi `allUsers` **run.invoker hanya pada API**, lalu deploy Hosting.
-Firebase ID token dan role tetap diperiksa aplikasi; worker tetap privat. Bila organisasi melarang public
-invoker, berhenti dan minta admin menentukan desain akses; runner tidak mengubah kebijakan organisasi.
+This stage checks the configuration, builds the frontend in live mode, checks the backend, installs deny-all
+rules on the `asapify` database only, gives `allUsers` **run.invoker on the API only**, then deploys Hosting.
+The application still checks Firebase ID tokens and roles; the worker stays private. If the organisation forbids
+public invokers, stop and ask an admin to choose an access design; the runner never changes organisation policy.
 
-Jangan gunakan tahap ini pada database `asapify` yang dipakai aplikasi lain dengan rules berbeda. Hosting
-mengganti konten situs default project dengan ASAPify; pastikan itu memang situs tujuan. Periksa rencana dahulu.
+Do not use this stage on an `asapify` database that another application uses with different rules. Hosting
+replaces the project's default site content with ASAPify; make sure that is the intended site. Review the plan first.
 
-Setelah berhasil, runner memeriksa HTTP halaman utama, `/notifikasi`, health lewat rewrite, dan penolakan
-akses operator anonim. URL yang diharapkan setelah sukses: `https://hack2skill-510921.web.app/notifikasi`.
-URL ini belum dinyatakan live sebelum hasil deployment dan pemeriksaan tersebut lulus.
+On success, the runner checks HTTP for the home page, `/notifications`, health through the rewrite, and refusal of
+anonymous operator access. Expected URL after success: `https://hack2skill-510921.web.app/notifications`.
+Do not call it live before the deployment and those checks pass.
 
-## 4. Verifikasi akun dan data
+## 4. Verify accounts and data
 
-Login Google sebagai penerima, buka `/notifikasi`, lalu uji penyimpanan preferensi dan inbox. Admin perlu
-memeriksa UID/email di Firebase Authentication sebelum memakai `tools/set_operator.py` untuk memberi
-role operator. Runner tidak otomatis memberi role kepada akun pengguna mana pun.
+Sign in with Google as a subscriber, open `/notifications`, then test saving preferences and the inbox. An admin
+must check the UID/email in Firebase Authentication before using `tools/set_operator.py` to grant the
+operator role. The runner never grants a role to any user account automatically.
 
-Untuk mengulang pemeriksaan backend saja:
+To repeat only the backend checks:
 
 ```bash
 python3 -m gcp.cloudshell verify --apply
 ```
 
-HTTP checks tidak membuktikan login, transaksi Firestore, pengiriman provider, atau pipeline satelit bekerja.
-Tanpa data pipeline, `DATA_NOT_READY` adalah kondisi yang diharapkan. Lanjutkan pengujian integrasi di
-`docs/NOTIFICATIONS.md` sebelum mengaktifkan kanal nyata. Catat URL dan pesan error pertama untuk diagnosis;
-jangan salin token atau log berisi rahasia.
+HTTP checks do not prove that sign-in, Firestore transactions, provider delivery or the satellite pipeline work.
+Without pipeline data, `DATA_NOT_READY` is the expected state. Continue with the integration tests in
+`docs/NOTIFICATIONS.md` before enabling real channels. Record the URL and the first error message for diagnosis;
+never copy tokens or logs that contain secrets.
 
-Referensi: [Cloud Run + Firebase Hosting](https://firebase.google.com/docs/hosting/cloud-run),
+References: [Cloud Run + Firebase Hosting](https://firebase.google.com/docs/hosting/cloud-run),
 [Firebase CLI](https://firebase.google.com/docs/cli),
 [Firestore composite indexes](https://docs.cloud.google.com/sdk/gcloud/reference/firestore/indexes/composite/create),
 [Cloud Run developer authentication](https://docs.cloud.google.com/run/docs/authenticating/developers).

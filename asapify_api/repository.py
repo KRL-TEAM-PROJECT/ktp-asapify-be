@@ -17,7 +17,7 @@ class CloudRepository:
     def __init__(self):
         project, self.bucket = os.environ.get("GOOGLE_CLOUD_PROJECT"), os.environ.get("ASAPIFY_DATA_BUCKET")
         if not project or not self.bucket:
-            raise ApiProblem(503, "DATA_NOT_READY", "Penyimpanan data belum dikonfigurasi.")
+            raise ApiProblem(503, "DATA_NOT_READY", "Data storage is not configured.")
         self.db = firestore.Client(project=project, database=os.environ.get("FIRESTORE_DATABASE", "asapify"))
         self.gcs = storage.Client(project=project)
 
@@ -25,17 +25,17 @@ class CloudRepository:
         q = self.db.collection("api_snapshots").where(filter=FieldFilter("timestamp", "<=", iso(at)))
         docs = list(q.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
         if not docs:
-            raise ApiProblem(503, "DATA_NOT_READY", "Belum ada hasil observasi untuk waktu ini.")
+            raise ApiProblem(503, "DATA_NOT_READY", "No observation results exist for this time yet.")
         return docs[0].to_dict()
 
     def json_object(self, name: str) -> dict:
         if not re.fullmatch(r"api/[A-Za-z0-9_./-]+\.json", name) or ".." in name:
-            raise ApiProblem(503, "DATA_INVALID", "Referensi data tidak sah.")
+            raise ApiProblem(503, "DATA_INVALID", "Invalid data reference.")
         blob = self.gcs.bucket(self.bucket).get_blob(name)
         if blob is None:
-            raise ApiProblem(503, "DATA_NOT_READY", "Berkas observasi belum tersedia.")
+            raise ApiProblem(503, "DATA_NOT_READY", "The observation file is not available yet.")
         if blob.size > 25_000_000:
-            raise ApiProblem(503, "DATA_INVALID", "Berkas observasi melebihi batas API.")
+            raise ApiProblem(503, "DATA_INVALID", "The observation file exceeds the API limit.")
         return json.loads(blob.download_as_bytes())
 
     def night(self, night: str) -> dict | None:
@@ -56,13 +56,13 @@ class CloudRepository:
             docs = list(q.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
             value = docs[0].to_dict()["cluster"] if docs else None
         if value is None:
-            raise ApiProblem(404, "NOT_FOUND", "Kelompok tidak tersedia pada waktu ini.")
+            raise ApiProblem(404, "NOT_FOUND", "The cluster is not available at this time.")
         return value
 
     def clusters(self, state: str, night: str | None, at: datetime | None) -> list[dict]:
         q = self.db.collection("clusters")
         if night:
-            q = q.where(filter=FieldFilter("awas_nights", "array_contains", night))
+            q = q.where(filter=FieldFilter("warning_nights", "array_contains", night))
         elif at is None:
             q = q.where(filter=FieldFilter("state", "==", state))
         items = []
@@ -91,7 +91,7 @@ class CloudRepository:
         def save(transaction):
             snap = ref.get(transaction=transaction)
             if not snap.exists:
-                raise ApiProblem(404, "NOT_FOUND", "Kelompok tidak ditemukan.")
+                raise ApiProblem(404, "NOT_FOUND", "Cluster not found.")
             cluster = snap.to_dict()
             check_decidable(cluster, request)
             # Decision, audit and alert are atomic. Concurrent clicks produce exactly one reservation.
@@ -100,10 +100,10 @@ class CloudRepository:
             transaction.create(self.db.collection("audit_log").document(), {
                 "cluster_id": cluster_id, "operator_uid": actor["uid"], **decision})
             if request.action == "publish":
-                alert = alert_payload(cluster, request.caption_id, now)
+                alert = alert_payload(cluster, request.caption, now)
                 transaction.create(self.db.collection("alerts").document(alert_id), {
                     "id": alert_id, "cluster_id": cluster_id, "province": cluster["province"],
-                    "caption_id": request.caption_id, "published_by": actor["email"],
+                    "caption": request.caption, "published_by": actor["email"],
                     "published_at": now, "status": "active", "closed_at": None, "closed_by": None,
                     "telegram": None, "notifications": decision["notifications"],
                     "purpose": alert["purpose"], "expires_at": alert["expires_at"], "fanout": "pending",
@@ -123,7 +123,7 @@ class CloudRepository:
         doc = self.db.collection("tg_chats").document(province).get()
         value = doc.to_dict() if doc.exists else {}
         if not value.get("alert_chat_id"):
-            raise ApiProblem(503, "DELIVERY_NOT_CONFIGURED", "Grup peringatan provinsi belum dikonfigurasi.")
+            raise ApiProblem(503, "DELIVERY_NOT_CONFIGURED", "The provincial alert group is not configured.")
         return str(value["alert_chat_id"])
 
 

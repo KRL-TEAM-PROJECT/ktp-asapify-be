@@ -37,10 +37,10 @@ def validate_bundle(bundle: dict) -> None:
         assert cluster["state"] in ("active", "closed")
         assert cluster["n_sat"] == 2
         for key in ("province", "rep_pixel", "centroid", "pixels", "trigger_slot", "utility_score",
-                    "neighbour_support", "attributes", "series", "neighbours", "verification", "awas_nights"):
+                    "neighbour_support", "attributes", "series", "neighbours", "verification", "warning_nights"):
             assert key in cluster, f"missing {key}"
     ids = {c["id"] for c in bundle.get("clusters", [])}
-    assert set(grid["clusters"]) <= ids, "every AWAS cluster needs a detail record"
+    assert set(grid["clusters"]) <= ids, "every WARNING cluster needs a detail record"
 
 
 def publish(bundle: dict, project: str, bucket: str, database: str):
@@ -84,7 +84,7 @@ def publish(bundle: dict, project: str, bucket: str, database: str):
         if existing.get("as_of", "") <= stamp:
             transaction.set(night_ref, {"night": night["night"], "month": night["night"][:7],
                 "has_data": any(s is not None for s in night["status"]),
-                "awas_clusters": len(night["clusters"]), "object": night_object, "as_of": stamp})
+                "warning_clusters": len(night["clusters"]), "object": night_object, "as_of": stamp})
     update_night(db.transaction())
     db.collection("api_snapshots").document(stamp).set({
         "timestamp": stamp, "n_sat": grid["n_sat"], **bundle["meta"], **objects})

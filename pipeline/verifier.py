@@ -1,5 +1,5 @@
-"""Tahap 3: agent verifikasi. Yang dikunci di sini adalah KONTRAK-nya; wiring ADK belum diisi
-karena ADK 2.0 punya breaking changes dari 1.x. Ikuti dokumentasi versi yang kamu install."""
+"""Stage 3: verification agent. What is locked here is the CONTRACT; the ADK wiring is not done yet
+because ADK 2.0 has breaking changes from 1.x. Follow the docs for the version you install."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,31 +9,31 @@ from pydantic import BaseModel, Field
 
 
 class AgentVerdict(BaseModel):
-    """Output schema-locked. Sengaja TIDAK ada field level/alert: agent tidak bisa mengubah level."""
+    """Schema-locked output. Deliberately NO level/alert field: the agent cannot change the level."""
     status: Literal["confirmed", "uncertain", "negative"]
     summary: str
     evidence: list[str] = Field(default_factory=list)
-    scene_age_days: int | None = None         # umur scene Landsat yang dipakai ToPeCAl
+    scene_age_days: int | None = None         # age of the Landsat scene used by ToPeCAl
     topecal_available: bool = False
 
 
-# --- Tool deterministik (dipanggil agent, dihitung tanpa LLM) ---------------------------------
+# --- Deterministic tools (called by the agent, computed without an LLM) ---------------------
 def fetch_himawari_crop(cell_id: str, around: datetime) -> str:
-    """Return path artefak citra hasil crop (visible + thermal) untuk cell itu."""
+    """Return the paths of the cropped image artefacts (visible + thermal) for that cell."""
     raise NotImplementedError
 
 
 def find_landsat_scene(cell_id: str, before: datetime) -> dict | None:
-    """Return metadata scene usable terbaru (id, acquired_at, cloud_cover) atau None."""
+    """Return metadata of the newest usable scene (id, acquired_at, cloud_cover) or None."""
     raise NotImplementedError
 
 
 def run_topecal(scene_id: str, cell_id: str) -> dict:
-    """Band math ToPeCAl pada scene. Butuh citra Landsat, jadi tidak bisa jadi bagian rule engine."""
+    """ToPeCAl band math on a scene. Needs Landsat imagery, so it cannot be part of the rule engine."""
     raise NotImplementedError
 
 
 def analyze_cell(cell_id: str, now: datetime) -> AgentVerdict:
-    """TODO: bungkus tool di atas dalam loop ADK dengan batas iterasi eksplisit dan exit condition.
-    Batas panggilan citra juga dijaga di lapisan tool/DB (cooldown), bukan hanya di prompt."""
+    """TODO: wrap the tools above in an ADK loop with an explicit iteration limit and exit condition.
+    The imagery call limit is also enforced in the tool/DB layer (cooldown), not only in the prompt."""
     raise NotImplementedError

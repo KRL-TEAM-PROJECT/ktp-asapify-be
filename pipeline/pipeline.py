@@ -1,4 +1,4 @@
-"""Satu siklus cron: baca cell gambut -> observasi termal -> rule engine -> (jika perlu) agent."""
+"""One cron cycle: read peat cells -> thermal observation -> rule engine -> (if needed) agent."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -12,7 +12,7 @@ from rules import RuleConfig, evaluate_cell, mark_agent_called, should_trigger_a
 
 
 class Repo(Protocol):
-    """Implementasi Postgres kamu sendiri (skema ada di db/schema.sql)."""
+    """Your own Postgres implementation (schema in db/schema.sql)."""
     def list_peat_cells(self) -> list[str]: ...
     def save_obs(self, obs: list[ThermalObs]) -> None: ...
     def get_recent_obs(self, cell_id: str, since: datetime) -> list[ThermalObs]: ...
@@ -33,7 +33,7 @@ def run_cycle(repo: Repo, source: ThermalSource, now: datetime | None = None, cf
         new = evaluate_cell(cell_id, recent, partial(repo.get_baseline, cell_id), prev, now, cfg)
 
         if should_trigger_agent(prev, new, now, cfg):
-            new = mark_agent_called(new, now)      # simpan dulu supaya cooldown aktif walau agent gagal
+            new = mark_agent_called(new, now)      # save first so the cooldown holds even if the agent fails
             repo.save_state(new)
             repo.save_analysis(cell_id, analyze_cell(cell_id, now))
         else:

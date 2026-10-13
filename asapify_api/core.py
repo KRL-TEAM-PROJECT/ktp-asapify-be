@@ -9,7 +9,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 UTC = timezone.utc
-STATUS = {"S": "SAFE", "N": "NO_OBSERVATION", "W": "WATCH", "A": "AWAS"}
+# Compact status letters are part of the pipeline contract; "A" (alarm) is the WARNING level.
+STATUS = {"S": "SAFE", "N": "NO_OBSERVATION", "W": "WATCH", "A": "WARNING"}
 PROVINCES = {11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 61, 62, 63, 64, 65}
 
 
@@ -34,7 +35,7 @@ def as_time(value: str | None) -> datetime:
             raise ValueError
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        raise ApiProblem(400, "VALIDATION", "Waktu harus ISO UTC, misalnya 2026-10-08T13:00:00Z.")
+        raise ApiProblem(400, "VALIDATION", "Time must be ISO UTC, e.g. 2026-10-08T13:00:00Z.")
 
 
 def date_key(value: str) -> str:
@@ -44,11 +45,11 @@ def date_key(value: str) -> str:
         datetime.strptime(value, "%Y-%m-%d")
         return value
     except ValueError:
-        raise ApiProblem(400, "VALIDATION", "Tanggal harus YYYY-MM-DD yang sah.")
+        raise ApiProblem(400, "VALIDATION", "Date must be a valid YYYY-MM-DD.")
 
 
 def night_of(at: datetime) -> str:
-    # Matches the FE: 54 slots, 20:00–04:50 WIB (13:00–21:50 UTC).
+    # Matches the FE: 54 slots, 20:00–04:50 UTC+7 (13:00–21:50 UTC).
     start = at.replace(hour=13, minute=0, second=0, microsecond=0)
     return (start if at >= start else start - timedelta(days=1)).date().isoformat()
 
@@ -83,14 +84,14 @@ def validate_grid(index: dict, grid: dict) -> bytes:
         as_time(grid["slot"])
         return values
     except (KeyError, TypeError, AssertionError, ValueError, binascii.Error, ApiProblem):
-        raise ApiProblem(503, "DATA_INVALID", "Data grid belum konsisten. Hubungi pengelola pipeline.")
+        raise ApiProblem(503, "DATA_INVALID", "Grid data is inconsistent. Contact the pipeline maintainers.")
 
 
 def geojson(index: dict, grid: dict, province: str | None = None) -> dict:
     values = validate_grid(index, grid)
     pixel_sats = grid.get("pixel_n_sat")
     if not isinstance(pixel_sats, list) or len(pixel_sats) != len(values) or any(v not in (0, 1, 2) for v in pixel_sats):
-        raise ApiProblem(503, "DATA_NOT_READY", "Jumlah satelit per piksel belum tersedia untuk GeoJSON.")
+        raise ApiProblem(503, "DATA_NOT_READY", "Per-pixel satellite counts are not available for GeoJSON yet.")
     membership = {i: cid for cid, cells in grid["clusters"].items() for i in cells}
     features = []
     for i, status in enumerate(grid["status"]):
@@ -110,22 +111,22 @@ def geojson(index: dict, grid: dict, province: str | None = None) -> dict:
 class DecisionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     action: Literal["publish", "reject"]
-    caption_id: str | None = Field(default=None, max_length=4096)
+    caption: str | None = Field(default=None, max_length=4096)
     reason: str | None = Field(default=None, max_length=2000)
 
     def validate_action(self) -> None:
-        if self.action == "publish" and (not self.caption_id or not self.caption_id.strip()
-                                        or len(self.caption_id.encode("utf-16-le")) // 2 > 1024):
-            raise ApiProblem(422, "CAPTION_INVALID", "Caption wajib diisi, maksimal 1.024 karakter.")
+        if self.action == "publish" and (not self.caption or not self.caption.strip()
+                                        or len(self.caption.encode("utf-16-le")) // 2 > 1024):
+            raise ApiProblem(422, "CAPTION_INVALID", "A caption is required, at most 1,024 characters.")
         if self.action == "reject" and (not self.reason or not self.reason.strip()):
-            raise ApiProblem(422, "REASON_REQUIRED", "Alasan penolakan wajib diisi.")
+            raise ApiProblem(422, "REASON_REQUIRED", "A rejection reason is required.")
 
 
 def check_decidable(cluster: dict, request: DecisionInput) -> None:
     request.validate_action()
     if cluster.get("decision"):
-        raise ApiProblem(409, "ALREADY_DECIDED", "Kelompok sudah diputuskan oleh operator.")
+        raise ApiProblem(409, "ALREADY_DECIDED", "An operator has already decided on this cluster.")
     if cluster.get("state") != "active":
-        raise ApiProblem(409, "ALREADY_CLOSED", "Kelompok sudah ditutup.")
+        raise ApiProblem(409, "ALREADY_CLOSED", "This cluster is already closed.")
     if request.action == "publish" and not cluster.get("verification"):
-        raise ApiProblem(409, "VERIFICATION_REQUIRED", "Tunggu hasil verifikasi sebelum menerbitkan.")
+        raise ApiProblem(409, "VERIFICATION_REQUIRED", "Wait for the verification result before publishing.")

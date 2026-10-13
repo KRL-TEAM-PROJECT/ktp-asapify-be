@@ -1,38 +1,38 @@
-# Deploy ASAPify ke Google Cloud
+# Deploying ASAPify to Google Cloud
 
-Panduan ini untuk project khusus ASAPify yang sudah aktif dan terhubung billing.
-Tidak ada deployment cloud yang telah dijalankan dalam pembuatan perubahan ini.
+This guide is for a dedicated ASAPify project that is active and linked to billing.
+The `hack2skill-510921` project has been live since 9 October 2026; see [CLOUDSHELL.md](CLOUDSHELL.md) for its status.
 
-Untuk menjalankan tahapan sekaligus melalui akun Cloud Shell pengguna, lihat
-[runner Cloud Shell](CLOUDSHELL.md). Runner menyediakan plan, deploy backend, deploy Hosting, dan smoke checks.
+To run every stage at once from the user's Cloud Shell account, see the
+[Cloud Shell runner](CLOUDSHELL.md). The runner provides the plan, backend deploy, Hosting deploy and smoke checks.
 
-## Yang disiapkan
+## What gets created
 
-| Resource | Konfigurasi |
+| Resource | Configuration |
 |---|---|
 | Cloud Run | `asapify-api`, Jakarta `asia-southeast2`, 1 vCPU, 512 MiB, min 0/max 2 |
-| Firestore Native | Database bernama `asapify`, Jakarta, delete protection |
+| Firestore Native | Database named `asapify`, Jakarta, delete protection |
 | GCS | `<PROJECT_ID>-asapify-data`, uniform IAM, public access prevention |
-| Build staging/logs | `<PROJECT_ID>-asapify-builds`, privat |
+| Build staging/logs | `<PROJECT_ID>-asapify-builds`, private |
 | Artifact Registry | Docker repository `asapify`, Jakarta |
 | Runtime account | `asapify-api`: datastore.user + firebaseauth.viewer, read-only data bucket |
-| Builder account | `asapify-build`: objectAdmin hanya bucket build, writer hanya repository image |
+| Builder account | `asapify-build`: objectAdmin on the build bucket only, writer on the image repository only |
 
-Peran datastore.user berlaku se-project; karena itu gunakan project khusus ASAPify.
-Tidak ada key JSON service account, akun Owner/Editor untuk runtime, undangan anggota, billing baru,
-VM, Redis, atau cron ingest yang diaktifkan oleh skrip. Scheduler/agent menunggu pipeline yang tervalidasi.
+The datastore.user role applies to the whole project, so use a project dedicated to ASAPify.
+The scripts create no service-account JSON key, no Owner/Editor runtime account, no member invitation,
+no new billing, VM, Redis or ingest cron. Schedulers/agents wait for a validated pipeline.
 
-## 1. Pilih project dan periksa biaya
+## 1. Choose the project and check costs
 
-Buka Cloud Shell di project yang benar. Akun setup memerlukan izin membuat resource, mengaktifkan API,
-menambahkan binding IAM, dan `iam.serviceAccounts.actAs` pada kedua service account. Jalankan sebagai
-admin project yang sudah berwenang; skrip tidak memberikan hak admin pada pengguna lain.
+Open Cloud Shell in the right project. The setup account needs permission to create resources, enable APIs,
+add IAM bindings, and `iam.serviceAccounts.actAs` on both service accounts. Run it as an authorised project
+admin; the scripts never grant admin rights to other users.
 
-Pastikan billing aktif, lalu buat budget dan notifikasi pada ambang yang disepakati Harris.
-Budget alert bukan batas pengeluaran otomatis; min 0/max 2 juga bukan jaminan biaya nol.
-Belum ada estimasi biaya live: jumlah piksel, volume data satelit, dan frekuensi verifikasi belum diukur.
+Make sure billing is active, then create a budget and notifications at the threshold agreed with Harris.
+A budget alert is not an automatic spending cap; min 0/max 2 does not guarantee zero cost either.
+There is no live cost estimate yet: pixel count, satellite data volume and verification frequency are not measured.
 
-Di checkout branch perubahan backend:
+From a checkout of the backend branch:
 
 ```bash
 export ASAPIFY_PROJECT_ID='hack2skill-510921'
@@ -40,7 +40,7 @@ python3 gcp/manage.py check --project "$ASAPIFY_PROJECT_ID" --apply
 python3 gcp/manage.py bootstrap --project "$ASAPIFY_PROJECT_ID"
 ```
 
-Perintah terakhir hanya mencetak rencana. Tinjau resource dan project; untuk membuatnya:
+The last command only prints the plan. Review the resources and the project; to create them:
 
 ```bash
 python3 gcp/manage.py bootstrap --project "$ASAPIFY_PROJECT_ID" --apply
@@ -48,76 +48,76 @@ python3 gcp/manage.py build --project "$ASAPIFY_PROJECT_ID" --version operator-v
 python3 gcp/manage.py deploy --project "$ASAPIFY_PROJECT_ID" --version operator-v1 --apply
 ```
 
-Bootstrap membaca inventory sebelum create; kegagalan permission tidak dianggap resource hilang.
-Bucket yang sudah ada tidak dihapus/dikosongkan. Bila memakai ulang bucket bernama sama,
-periksa sendiri region dan public access prevention-nya. Perintah ini belum diuji di project nyata.
-Gunakan versi image baru untuk setiap perubahan berikutnya agar rollback tidak ambigu.
+Bootstrap reads the inventory before creating anything; a permission failure is never treated as a missing resource.
+Existing buckets are never deleted or emptied. If you reuse a bucket with the same name,
+check its region and public access prevention yourself.
+Use a new image version for every later change so rollback is unambiguous.
 
-## 2. Aktifkan Firebase Auth
+## 2. Enable Firebase Auth
 
-Tambahkan Firebase ke **project GCP yang sama** melalui Firebase Console, buat Web App, aktifkan provider
-Google, pilih support email, dan tambahkan domain Hosting ke Authorized domains. Langkah akun/persetujuan
-Firebase dilakukan oleh pemilik project. Salin konfigurasi web ke `.env.local` repo FE sesuai `.env.example`.
-Konfigurasi web bukan kunci Admin; jangan meletakkan token bot atau service-account key di `VITE_*`.
+Add Firebase to the **same GCP project** in the Firebase Console, create a Web App, enable the Google provider,
+choose a support email, and add the Hosting domain to Authorized domains. The project owner handles the Firebase
+account/consent steps. Copy the web configuration into the FE repository's `.env.local` following `.env.example`.
+The web configuration is not an Admin key; never put a bot token or service-account key in `VITE_*`.
 
-Setelah calon operator login Google pertama kali (akan ditolak sampai perannya diberikan), admin
-memeriksa email dan UID di Firebase Authentication. Dari lingkungan Python yang terautentikasi ADC:
+After a future operator signs in with Google for the first time (refused until the role is granted), an admin
+checks the email and UID in Firebase Authentication. From a Python environment authenticated with ADC:
 
 ```bash
 gcloud auth application-default login
-python tools/set_operator.py --project "$ASAPIFY_PROJECT_ID" --uid 'UID_YANG_SUDAH_DIVERIFIKASI'
-python tools/set_operator.py --project "$ASAPIFY_PROJECT_ID" --uid 'UID_YANG_SUDAH_DIVERIFIKASI' --apply
+python tools/set_operator.py --project "$ASAPIFY_PROJECT_ID" --uid 'VERIFIED_UID'
+python tools/set_operator.py --project "$ASAPIFY_PROJECT_ID" --uid 'VERIFIED_UID' --apply
 ```
 
-Tidak ada email dari chat yang diberi akses otomatis. Operator keluar lalu masuk lagi agar claim diperbarui.
+No email from a chat gets access automatically. The operator signs out and in again to refresh the claim.
 
-## 3. Periksa API sebelum menghubungkan Hosting
+## 3. Check the API before connecting Hosting
 
-Deploy awal menggunakan IAM privat. Gunakan proxy gcloud, yang memasukkan identitas cloud secara otomatis:
+The first deploy uses private IAM. Use the gcloud proxy, which adds the cloud identity automatically:
 
 ```bash
 gcloud run services proxy asapify-api --project "$ASAPIFY_PROJECT_ID" --region asia-southeast2 --port 8080
 ```
 
-Dari terminal lain: `curl -i http://127.0.0.1:8080/api/v1/health` harus 200;
-`curl -i http://127.0.0.1:8080/api/v1/operator/pixels` harus 401.
-Token Firebase yang sah tetapi tidak punya role operator harus 403. Token expired/revoked harus 401.
-Periksa akses sah dengan token operator dari aplikasi; jangan kirim token ke chat atau commit repo.
+From another terminal: `curl -i http://127.0.0.1:8080/api/v1/health` must return 200;
+`curl -i http://127.0.0.1:8080/api/v1/operator/pixels` must return 401.
+A valid Firebase token without the operator role must get 403. An expired/revoked token must get 401.
+Check authorised access with an operator token from the app; never paste tokens into chats or commits.
 
-Untuk rewrite Firebase Hosting, Cloud Run perlu menerima request pada lapisan transport tanpa IAM.
-Endpoint operator **tetap** memverifikasi token Firebase dan peran di server:
+For the Firebase Hosting rewrite, Cloud Run must accept requests at the transport layer without IAM.
+Operator endpoints **still** verify the Firebase token and role on the server:
 
 ```bash
 python3 gcp/manage.py expose-api --project "$ASAPIFY_PROJECT_ID"
 python3 gcp/manage.py expose-api --project "$ASAPIFY_PROJECT_ID" --apply
 ```
 
-Perintah tersebut memberi `allUsers` hanya `roles/run.invoker`, bukan akses database/storage.
-Jika kebijakan organisasi melarang public invoker, jangan melemahkan kebijakan: gunakan desain akses
-yang disetujui admin. Deployment Hosting dijelaskan di `docs/GCP.md` repo FE.
+That command gives `allUsers` only `roles/run.invoker`, not database/storage access.
+If organisation policy forbids public invokers, do not weaken the policy: use an access design
+approved by an admin. Hosting deployment is described in the FE repository's `docs/GCP.md`.
 
-## 4. Sambungkan data dan notifikasi
+## 4. Connect data and notifications
 
-Gunakan `tools/publish_snapshot.py` dengan hasil nyata sesuai DATA_CONTRACT.md.
-Manifest diterbitkan setelah objek dan detail selesai. `replay` pada manifest diwariskan ke cluster,
-sehingga backtest tidak dipublikasikan sebagai peringatan nyata.
+Use `tools/publish_snapshot.py` with real output following DATA_CONTRACT.md.
+The manifest is published after the objects and details are complete. The manifest's `replay` is inherited by
+clusters, so a backtest is never published as a real warning.
 
-Telegram inline lama diganti outbox multi-kanal. Ikuti [NOTIFICATIONS.md](NOTIFICATIONS.md) untuk worker,
-Cloud Tasks, consent penerima, Telegram DM, push simulasi, indeks Firestore, dan pengujian cloud.
-Jangan memakai instruksi tg_chats/sendPhoto lama untuk jalur v1 baru.
+The old inline Telegram path was replaced by a multi-channel outbox. Follow [NOTIFICATIONS.md](NOTIFICATIONS.md)
+for the worker, Cloud Tasks, subscriber consent, Telegram DM, exercise push, Firestore indexes and cloud tests.
+Do not use the old tg_chats/sendPhoto instructions for the v1 path.
 
-## Pekerjaan lanjutan yang masih wajib
+## Remaining required work
 
-1. Samakan keputusan scope Sumatra/Kalimantan dan jam malam dengan tim; catat pada WORKLOG.
-2. Lengkapi ingest GK2A/Himawari, peat mask, baseline NASA POWER, MAUT/neighbour support, dan kalibrasi.
-3. Lengkapi agen ADK/Gemini dengan bukti VIIRS/citra dan batas tool; hapus ketergantungan jalur lama pada ToPeCAl.
-4. Lengkapi penutupan alert, pemulihan outbox, historical decision snapshots, dan pembaruan signed URL citra.
-5. Uji token nyata, transaksi Firestore konkuren, egress Telegram ke penerima demo, build container, dan Firebase rewrite.
-6. Baru kemudian tambahkan Cloud Scheduler untuk job yang sudah dapat dijalankan dan idempoten.
+1. Align the Sumatra/Kalimantan scope and night window decision with the team; record it in the worklog.
+2. Complete GK2A/Himawari ingest, the peat mask, the NASA POWER baseline, MAUT/neighbour support and calibration.
+3. Complete the ADK/Gemini agent with VIIRS/imagery evidence and tool limits; drop the old path's ToPeCAl dependency.
+4. Complete alert closing, outbox recovery, historical decision snapshots and signed image URL refresh.
+5. Test real tokens, concurrent Firestore transactions, Telegram egress to demo recipients, the container build and the Firebase rewrite.
+6. Only then add Cloud Scheduler for jobs that are runnable and idempotent.
 
-Jangan menyebut hasil tahap ini sebagai EWS operasional atau demo end-to-end satelit/AI yang telah tervalidasi.
+Do not describe this stage as an operational early-warning system or a validated end-to-end satellite/AI demo.
 
-## Referensi resmi yang diperiksa
+## Official references checked
 
 - https://docs.cloud.google.com/run/docs/deploying
 - https://docs.cloud.google.com/sdk/gcloud/reference/builds/submit

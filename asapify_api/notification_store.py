@@ -41,7 +41,7 @@ class NotificationStore:
             old = ref.get(transaction=tx).to_dict() or {}
             registration = owner.get(transaction=tx)
             if registration.exists and registration.to_dict()['uid'] != uid:
-                raise ApiProblem(409, 'DEVICE_ALREADY_LINKED', 'Putuskan perangkat dari akun sebelumnya terlebih dahulu.')
+                raise ApiProblem(409, 'DEVICE_ALREADY_LINKED', 'Unlink the device from its previous account first.')
             if old.get('fcm_token') and old['fcm_token'] != token:
                 tx.delete(self.db.collection('notification_devices').document(key(old['fcm_token'])))
             tx.set(owner, {'uid': uid})
@@ -99,7 +99,7 @@ class NotificationStore:
         alert_ref = self.db.collection('alerts').document(alert_id)
         alert = alert_ref.get().to_dict()
         payload = {'id': alert['id'], 'cluster_id': alert['cluster_id'], 'province': str(alert['province']),
-                   'text': alert['caption_id'], 'purpose': alert['purpose'], 'published_at': alert['published_at'],
+                   'text': alert['caption'], 'purpose': alert['purpose'], 'published_at': alert['published_at'],
                    'expires_at': alert['expires_at'], 'status': alert['status']}
         query = self.db.collection('notification_recipients').where(
             filter=FieldFilter('provinces', 'array_contains', payload['province'])).where(
@@ -141,7 +141,7 @@ class NotificationStore:
                 return
             except AlreadyExists:
                 continue  # A concurrent run wrote part of this page; read again.
-        raise ApiProblem(503, 'FANOUT_CONFLICT', 'Penulisan inbox bertabrakan; sweep akan melanjutkan.')
+        raise ApiProblem(503, 'FANOUT_CONFLICT', 'Inbox writes collided; the sweep will resume.')
 
     def resume_fanouts(self, limit=20):
         """Finish publications whose fan-out stopped after the decision was saved."""
@@ -172,7 +172,7 @@ class NotificationStore:
         def ack(tx):
             snap = ref.get(transaction=tx)
             if not snap.exists or snap.to_dict()['recipient_id'] != key(uid):
-                raise ApiProblem(404, 'NOT_FOUND', 'Notifikasi tidak ditemukan.')
+                raise ApiProblem(404, 'NOT_FOUND', 'Notification not found.')
             item = snap.to_dict()
             at = item.get('acknowledged_at') or iso(utc_now())
             if not item.get('acknowledged_at'):
@@ -197,7 +197,7 @@ class NotificationStore:
                 return None
             now = iso(utc_now())
             if job['not_before'] > now:
-                raise ApiProblem(503, 'NOT_DUE', 'Tugas belum waktunya dijalankan.')
+                raise ApiProblem(503, 'NOT_DUE', 'The job is not due yet.')
             inbox = self.db.collection('notification_inbox').document(job['inbox_id']).get(transaction=tx).to_dict()
             profile = self.db.collection('notification_recipients').document(job['recipient_id']).get(transaction=tx).to_dict() or {}
             reason = dispatch_guard(job, inbox, profile, now)
@@ -244,5 +244,5 @@ class NotificationStore:
 def get_notification_store():
     project = os.getenv('GOOGLE_CLOUD_PROJECT')
     if not project:
-        raise ApiProblem(503, 'NOTIFICATIONS_NOT_CONFIGURED', 'Project notifikasi belum dikonfigurasi.')
+        raise ApiProblem(503, 'NOTIFICATIONS_NOT_CONFIGURED', 'The notification project is not configured.')
     return NotificationStore(firestore.Client(project=project, database=os.getenv('FIRESTORE_DATABASE', 'asapify')))

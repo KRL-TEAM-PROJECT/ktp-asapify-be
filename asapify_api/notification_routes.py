@@ -58,7 +58,7 @@ def unlink_device(actor=Depends(require_user), store=Depends(get_notification_st
 def telegram_link(actor=Depends(require_user), store=Depends(get_notification_store)):
     username = os.getenv('TELEGRAM_BOT_USERNAME', '')
     if not re.fullmatch(r'[A-Za-z0-9_]{5,32}', username):
-        raise ApiProblem(503, 'TELEGRAM_NOT_CONFIGURED', 'Bot Telegram belum dikonfigurasi.')
+        raise ApiProblem(503, 'TELEGRAM_NOT_CONFIGURED', 'The Telegram bot is not configured.')
     code = store.telegram_link(actor['uid'])
     return {'url': f'https://t.me/{username}?start={code}', 'expires_in_seconds': 600}
 
@@ -68,10 +68,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                            store=Depends(get_notification_store)):
     expected = os.getenv('TELEGRAM_WEBHOOK_SECRET')
     if not expected or not hmac.compare_digest(expected, x_telegram_bot_api_secret_token or ''):
-        raise ApiProblem(401, 'UNAUTHENTICATED', 'Webhook tidak sah.')
+        raise ApiProblem(401, 'UNAUTHENTICATED', 'Invalid webhook.')
     raw = await request.body()
     if len(raw) > 16384:
-        raise ApiProblem(413, 'VALIDATION', 'Payload terlalu besar.')
+        raise ApiProblem(413, 'VALIDATION', 'Payload too large.')
     try:
         body = await request.json()
         message = body.get('message', {})
@@ -81,7 +81,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if chat.get('type') == 'private' and isinstance(chat.get('id'), int) and re.fullmatch(r'/start [A-Za-z0-9_-]{32}', text):
             store.link_telegram(text.split()[1], str(chat['id']))
     except (ValueError, TypeError, AttributeError):
-        raise ApiProblem(400, 'VALIDATION', 'Payload webhook tidak sah.')
+        raise ApiProblem(400, 'VALIDATION', 'Invalid webhook payload.')
     return {'ok': True}  # No outgoing message or disclosure of binding state.
 
 

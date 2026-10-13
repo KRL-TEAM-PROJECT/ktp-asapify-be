@@ -60,7 +60,7 @@ def alert_payload(cluster: dict, caption: str, now: str) -> dict:
 def plan_recipient(alert: dict, recipient: dict, now: str, escalation_seconds: int = 120):
     """Inbox is authoritative; provider acceptance never serves as an acknowledgement.
 
-    Production AWAS is always emergency, regardless of urgency or edited caption.
+    Production WARNING is always emergency, regardless of urgency or edited caption.
     FCM, including FCM-backed web push, is excluded from that route.
     """
     if not recipient.get('consent') or alert['province'] not in recipient.get('provinces', []):

@@ -22,9 +22,9 @@ class PlainText(HTMLParser):
 def text_message(inbox):
     parser = PlainText()
     parser.feed(inbox['text'])
-    prefix = '[SIMULASI] ' if inbox['purpose'] == 'exercise' else ''
+    prefix = '[EXERCISE] ' if inbox['purpose'] == 'exercise' else ''
     body = prefix + ''.join(parser.parts).strip()
-    return body[:1800] + '\nAWAS adalah indikasi, bukan kebakaran terkonfirmasi.'
+    return body[:1800] + '\nWARNING is an indication, not a confirmed fire.'
 
 
 def outcome(status, error=None, provider_id=None):
@@ -43,7 +43,7 @@ def send(job, inbox, profile):
     origin = os.getenv('ASAPIFY_PUBLIC_ORIGIN', '').rstrip('/')
     if not origin.startswith('https://'):
         return outcome('blocked', 'PUBLIC_ORIGIN_NOT_CONFIGURED')
-    link = origin + '/notifikasi?open=' + inbox['id']
+    link = origin + '/notifications?open=' + inbox['id']
     if channel == 'telegram':
         token = os.getenv('TELEGRAM_BOT_TOKEN')
         chat = profile.get('telegram_chat_id')
@@ -55,7 +55,7 @@ def send(job, inbox, profile):
                 response = client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={
                     'chat_id': chat, 'text': text_message(inbox),
                     'link_preview_options': {'is_disabled': True},
-                    'reply_markup': {'inline_keyboard': [[{'text': 'Buka & konfirmasi diterima', 'url': link}]]}})
+                    'reply_markup': {'inline_keyboard': [[{'text': 'Open & confirm receipt', 'url': link}]]}})
             data = response.json()
             if response.is_success and data.get('ok') and data.get('result', {}).get('message_id'):
                 return outcome('accepted', provider_id=data['result']['message_id'])
@@ -69,7 +69,7 @@ def send(job, inbox, profile):
     try:
         message_id = messaging.send(messaging.Message(
             token=profile['fcm_token'],
-            notification=messaging.Notification(title='ASAPify · Simulasi / informasi', body=text_message(inbox)[:220]),
+            notification=messaging.Notification(title='ASAPify · Exercise / information', body=text_message(inbox)[:220]),
             data={'inbox_id': inbox['id'], 'url': link, 'purpose': inbox['purpose']},
             android=messaging.AndroidConfig(priority='normal', ttl=300),
             webpush=messaging.WebpushConfig(headers={'TTL': '300', 'Urgency': 'normal'},
