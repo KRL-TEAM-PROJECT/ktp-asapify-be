@@ -18,9 +18,10 @@ are later stages and are never reported as delivered. Google Chat is not used.
 | Authentication | Firebase ID token, verified email, custom claim `role=operator`; revocation checked |
 | Operator decision | Firestore transaction: decision, alert reservation, audit; a second decision is refused |
 | Telegram | Text adapter in the Notification Engine; DM linking, `dry_run` by default, accepted/unknown status |
-| Cloud Run + GCS + Firestore + Artifact Registry | Live in `hack2skill-510921` since 9 Oct. Every merge to `main` that touches the API is tested and deployed by GitHub Actions (see [CLOUDSHELL.md](docs/CLOUDSHELL.md)). Firestore rules not released yet; data bucket still empty |
-| Himawari/GK2A pipeline, baseline, MAUT, calibration | The older `pipeline/` code remains experimental; not connected to the new API |
-| ADK/Gemini agent | Old scaffold only; `/verify` returns a clear 503, never a fake AI result |
+| Cloud Run + GCS + Firestore + Artifact Registry | Live in `hack2skill-510921` since 9 Oct. Every merge to `main` that touches the API is tested and deployed by GitHub Actions (see [CLOUDSHELL.md](docs/CLOUDSHELL.md)). Firestore rules released 13 Oct (no direct browser access); data bucket still empty |
+| Risk engine | 65 peat regions, NASA POWER + Open-Meteo every 15 minutes, Fuzzy MAUT, state machine, hourly audit trail. See [ENGINE.md](docs/ENGINE.md) |
+| Himawari/GK2A pipeline | The older `pipeline/` code remains experimental; the engine keeps its conventions ([ENGINE.md](docs/ENGINE.md) maps one to the other) |
+| ADK/Gemini agent | `geospatial_analyst` on Vertex AI with `fetch_firms_data` (NASA FIRMS): automatic on entering ALERT and the Re-verify button, YAML checked before it is stored, hard daily quota. Cluster `/verify` still returns 503 |
 | Alert list/close | Not implemented; endpoints return 503 and are not used by the UI yet |
 | Cloud tests with real Firebase/Firestore/Telegram | Google sign-in, preferences and inbox proven live; 401/403 and the private worker verified. Publish, Telegram and the operator flow not tested yet (no data, bot not installed) |
 
@@ -29,7 +30,8 @@ The FE contract of 6 October covers **Sumatra + Kalimantan**, grid origin `[94.9
 and phrased the night window differently. This service follows the FE contract for data exchange;
 the detector scope decision still needs to be recorded with the team.
 
-Pixel statuses are `SAFE`, `NO_OBSERVATION`, `WATCH` and `WARNING` (compact codes `S`, `N`, `W`, `A`).
+Statuses are `SAFE` < `WARNING` < `ALERT`, plus `NO_OBSERVABLE` (compact codes `S`, `W`, `A`, `N`), for
+pixels and for the risk engine's regions alike.
 
 ## Local
 

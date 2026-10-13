@@ -26,7 +26,7 @@ batch (≤ 400 writes, under Firestore's 500 limit), inside the publish request.
 For thousands of subscribers per province, move fan-out to the worker and load-test first (Cloud Run timeout 60 s).
 
 **FCM design correction:** Google's documentation rules out FCM for emergency/high-risk use cases.
-So every operational WARNING publication gets `purpose=emergency` from the server and is blocked for
+So every operational ALERT publication gets `purpose=emergency` from the server and is blocked for
 `fcm`/`web_push` at three layers: planning, claiming and the adapter. Editing the caption or priority does not
 change the classification. Backtests get `replay=true` from the pipeline manifest and become `exercise`;
 recipients must opt in to exercises. Never change replay to disguise a real warning as information.
@@ -163,5 +163,5 @@ Set `FCM_ENABLED=true` on the API and worker only for exercise/non-emergency tes
 - https://core.telegram.org/bots/api#sendmessage
 - https://core.telegram.org/bots/api#setwebhook
 
-The satellite pipeline and the Gemini agent remain separate from the notification engine. This package is not
+The risk engine and the Gemini agent only hand verified regions to the notification engine through an operator decision. This package is not
 an operational early-warning system and has not proven latency, reach or delivery rate in the field.
