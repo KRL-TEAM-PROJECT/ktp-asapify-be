@@ -54,7 +54,8 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    humidity is Open-Meteo's model value for the slot's hour (one request for all regions per hour); without it the
    rules use the thermal input alone and say so in the reason.
 8. **Storage.** Firestore database `asapify`, see the top of `repo.py` for every collection. Slot records live in
-   `engine_regions/{id}/slots/{YYYYMMDDHHMM}`; POWER hours (support only) stay in `hours`.
+   `engine_regions/{id}/slots/{YYYYMMDDHHMM}`; POWER hours (support only) stay in `hours`; the map's day archive
+   lives in `engine_days/{YYYY-MM-DD}` (below).
 9. **Agent output.** `status confirmed / uncertain / negative` became the design's YAML schema with English keys:
    `validation_status` (CONFIRMED / REJECTED / NEEDS_MANUAL_REVIEW), `confidence_score`, `analysis`,
    `supporting_data` and `draft_operator_alert`. The verdict still has no level field: the agent cannot change it.
@@ -72,7 +73,7 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    2 full-disk files, ~60 MB), decode with satpy, score all 65 regions. A broken file only drops that satellite.
 4. Per region: fusion, then the rules with the cap, then the state machine. Humidity is cached per hour in meta;
    FIRMS is asked once, and only when some region has a hot pixel. One Firestore batch writes every state, slot
-   record and transition.
+   record and transition, and the slot's entry in the day archive.
 5. A region that entered ALERT gets `last_agent_at` saved first (so the 6 h cooldown holds even if the agent fails)
    and an agent request in `engine_meta/ingestion.agent_pending`. Requests run while at least 60 s of budget is left;
    the rest wait for the next cycle.
@@ -80,6 +81,22 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
 **NASA POWER support, every 15 minutes:** `POST /_internal/engine/tick?batch=20&budget=240` (job
 `asapify-engine-tick`). One request asks POWER for its latest published hour; most cycles stop there (one Firestore
 read). New hours are written per region to `hours` and summarised as `power` on the region document.
+
+## Hot pixels on the map and the day archive
+
+- **Hot pixels.** `contextual.py` keeps up to 5 hot pixels per region and satellite (latitude, longitude, ΔBT above
+  the background; strongest first) in the slot record, `views.<satellite>.hot_pixels`. Fusion adds `viirs`: the VIIRS
+  detections within the support's limits (10 km, 12 h) of any of those pixels, nearest first, at most 5. Both are
+  evidence for the map; the VIIRS support value still comes from the strongest pixel.
+- **Day archive.** Each slot also lands in `engine_days/{YYYY-MM-DD}`, one document per WIB calendar day, in the same
+  batch: every region's status code (`S`, `W`, `A`, `N`; `-` = not assessed) and ΔT in `regions` order, plus the
+  pixels (`[lat, lon, ΔBT]`) and VIIRS (`[lat, lon, minutes from the slot]`) of the regions with a hot pixel, as one
+  compact JSON string per slot under its WIB time `HHMM`.
+  A slot is kept under 7,000 characters (pixels and VIIRS are cut first, then the weakest regions; `trimmed` says
+  so), so a day stays under Firestore's 1 MiB. `alert` / `warning` mark the day for the calendar.
+- **Reads.** `GET /api/v1/operator/days?month=YYYY-MM` lists a month's days and the first and last day;
+  `GET /api/v1/operator/days/{date}` returns one day in one read; `GET /api/v1/operator/regions/{id}?date=YYYY-MM-DD`
+  returns that region's slots of the day (slot records are kept 30 days).
 
 ## Validation: 11 October 2026, 18:10 UTC
 
@@ -113,7 +130,10 @@ before trusting any number.
 - **Firestore** (`asapify` holds the project's free tier): about 65 slot records + 65 state updates per slot,
   ~19k writes a day, plus ~1.6k for POWER. That is around the free 20k writes a day, so expect cents a month.
   Slot records carry `expire_at` for a TTL policy that drops them after 30 days (TTL deletes are billed, also cents).
-  The region page reads 6 slot records per hour shown (24 h by default, at most 72 h = 432 reads).
+  The region page reads 6 slot records per hour shown (24 h by default, at most 72 h = 432 reads; one day by date =
+  at most 144). The day archive adds one write per slot (144 a day); the map reads one document per day it opens and
+  at most 33 per calendar month shown. A day is at most 1 MiB and is kept without TTL: under 365 MiB a year in the
+  worst case, against Firestore's free 1 GiB.
 - **Open-Meteo**: one request with 65 locations per hour, about 1,560 of the 10,000 free calls a day.
 - **FIRMS**: one request per source per slot, only when a region has a hot pixel.
 - **Gemini**: unchanged, `AGENT_DAILY_QUOTA` (20 a day) taken in a transaction before any model call.

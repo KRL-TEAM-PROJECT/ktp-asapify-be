@@ -13,9 +13,10 @@ from datetime import datetime, timezone
 
 from .canonical import Quality
 from .contextual import RegionThermal
-from .firms import distance_km
+from .firms import CONFIDENT, distance_km
 
 SATELLITES = ("himawari9", "gk2a")
+MAX_VIIRS = 5   # VIIRS detections kept per region as map evidence (nearest first)
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class Fused:
     support: dict[str, float]      # viirs_support / power_support, only at a possible hotspot and when they say something
     hot_lat: float | None
     hot_lon: float | None
+    viirs: tuple[dict, ...] = ()   # VIIRS detections near the hot pixels, for the map (viirs_near)
 
 
 def solar_elevation_deg(ts: datetime, lat: float, lon: float) -> float:
@@ -72,6 +74,22 @@ def viirs_support(hotspots: list[dict], lat: float, lon: float, slot: datetime, 
         recent = _ramp(abs((h["acq_ts"] - slot).total_seconds()) / 3600, *cfg.viirs_hours)
         best = max(best, near * recent)
     return round(best, 3) if best > 0 else None
+
+
+def viirs_near(hotspots: list[dict], points: list[tuple[float, float]], slot: datetime,
+               cfg: FusionConfig) -> tuple[dict, ...]:
+    """VIIRS detections inside the support's distance and time limits of any of these hot pixels, nearest first."""
+    near = []
+    for h in hotspots:
+        if h["confidence"] not in CONFIDENT or abs((h["acq_ts"] - slot).total_seconds()) >= cfg.viirs_hours[1] * 3600:
+            continue
+        km = min(distance_km(lat, lon, h["latitude"], h["longitude"]) for lat, lon in points)
+        if km < cfg.viirs_km[1]:
+            near.append((km, h))
+    near.sort(key=lambda pair: pair[0])
+    return tuple({"lat": round(h["latitude"], 4), "lon": round(h["longitude"], 4),
+                  "acquired_at": h["acq_ts"].isoformat().replace("+00:00", "Z"), "confidence": h["confidence"],
+                  "distance_km": round(km, 1)} for km, h in near[:MAX_VIIRS])
 
 
 def power_support(power: dict | None, slot: datetime, cfg: FusionConfig) -> float | None:
@@ -120,9 +138,12 @@ def fuse(views: dict[str, RegionThermal | None], *, night: bool, slot: datetime,
     # 3) where the strongest anomaly is; supporting data only count at a possible hotspot, never on a quiet region
     lead = max(hot.values() or seen.values(), key=lambda v: v.max_anomaly_k)
     lat, lon = (lead.hot_lat, lead.hot_lon) if lead.hot_lat is not None else centre
-    support = {}
+    support, near = {}, ()
     if hot:
-        support = {"viirs_support": viirs_support(list(hotspots), lat, lon, slot, cfg),
+        rows = list(hotspots)
+        support = {"viirs_support": viirs_support(rows, lat, lon, slot, cfg),
                    "power_support": power_support(power, slot, cfg)}
+        # the map shows VIIRS beside every hot pixel; the support above stays at the strongest one
+        near = viirs_near(rows, [(lat, lon)] + [(p[0], p[1]) for v in hot.values() for p in v.hot_pixels], slot, cfg)
     return Fused(round(delta_t, 3), cloud_pct, quality, tuple(flags),
-                 {k: v for k, v in support.items() if v is not None}, lat, lon)
+                 {k: v for k, v in support.items() if v is not None}, lat, lon, near)

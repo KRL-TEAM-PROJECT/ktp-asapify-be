@@ -7,15 +7,16 @@ protocol of ingest.py, so the whole flow runs in tests without the internet or F
 """
 from __future__ import annotations
 
+import json
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable
 
 from . import openmeteo, satellites
 from .canonical import Quality
-from .contextual import RegionThermal
+from .contextual import MAX_PIXELS, RegionThermal
 from .fsm import mark_agent_called, should_trigger_agent, step
-from .fusion import SATELLITES, FusionConfig, Fused, fuse, solar_elevation_deg
+from .fusion import MAX_VIIRS, SATELLITES, FusionConfig, Fused, fuse, solar_elevation_deg
 from .ingest import Repo, iso, parse, region_doc, state_from_doc, transition_doc
 from .models import Status
 from .regions import Region
@@ -85,7 +86,7 @@ def assess_slot(region: Region, views: dict[str, RegionThermal | None], slot: da
         "views": {name: v.summary() if v is not None else None for name, v in views.items()},
         "inputs": {"delta_t_k": fused.delta_t, "cloud_cover_pct": fused.cloud_pct, "relative_humidity_pct": humidity,
                    "hot_lat": fused.hot_lat, "hot_lon": fused.hot_lon},
-        "support": fused.support,
+        "support": fused.support, "viirs": list(fused.viirs),
         "quality": {"thermal": fused.quality.value, "relative_humidity": "ACCEPTED" if humidity is not None else "MISSING"},
         "flags": list(fused.flags) + (["model_estimate"] if humidity is not None else []),
         "sources": {"thermal": THERMAL, "relative_humidity": openmeteo.SOURCE, "viirs_support": "nasa_firms",
@@ -96,13 +97,74 @@ def assess_slot(region: Region, views: dict[str, RegionThermal | None], slot: da
     return result, record
 
 
+# --- day archive: what the map's date picker reads ----------------------------------------------------------------
+DAY_TZ = timezone(timedelta(hours=7))   # archive days are WIB calendar days (UTC+7)
+STATUS_CODE = {"SAFE": "S", "WARNING": "W", "ALERT": "A", "NO_OBSERVABLE": "N"}   # "-" = not assessed in that slot
+MAX_SLOT_CHARS = 7000   # 144 slots x 7000 characters keep one day under Firestore's 1 MiB document limit
+VIEW_FLAGS = ("two_satellites_agree", "satellites_disagree", "two_satellites_quiet")
+
+
+def archive_key(slot: datetime) -> tuple[str, str]:
+    """WIB date of a slot (its archive document) and its WIB time HHMM (its key in that document)."""
+    local = slot.astimezone(DAY_TZ)
+    return local.date().isoformat(), f"{local:%H%M}"
+
+
+def day_window(day: str) -> tuple[str, str]:
+    """UTC bounds [start, end) of one WIB calendar day, in the form slot records store `observed_at`."""
+    start = datetime.combine(date.fromisoformat(day), datetime.min.time(), DAY_TZ)
+    return iso(start), iso(start + timedelta(days=1))
+
+
+def _hot_pixels(record: dict, name: str) -> list[dict]:
+    return ((record.get("views") or {}).get(name) or {}).get("hot_pixels") or []
+
+
+def _hot_entry(record: dict, slot: datetime, pixels: int, viirs: int) -> dict:
+    """Arrays, to keep the day small: pixels [lat, lon, delta_bt K], VIIRS [lat, lon, minutes from the slot]."""
+    entry = {name: [[round(p["lat"], 3), round(p["lon"], 3), round(p["anomaly_k"], 1)]
+                     for p in _hot_pixels(record, name)[:pixels]] for name in SATELLITES}
+    entry["viirs"] = [[round(v["lat"], 3), round(v["lon"], 3),
+                       round((parse(v["acquired_at"]) - slot).total_seconds() / 60)]
+                      for v in record.get("viirs", [])[:viirs]]
+    entry["view"] = next((f for f in record.get("flags", []) if f in VIEW_FLAGS or f.startswith("single_satellite:")),
+                         None)
+    return entry
+
+
+def archive_slot(slot: datetime, satellites_read: list[str], regions: tuple[Region, ...],
+                 records: dict[str, dict]) -> dict:
+    """One slot of the day archive (engine_days): every region's status and delta T, plus the hot pixels and nearby
+    VIIRS of each region where a satellite saw one. A slot over MAX_SLOT_CHARS loses detail first (fewer pixels and
+    VIIRS per region, then the weakest regions), never a status."""
+    day, key = archive_key(slot)
+    rec = [records.get(r.id) or {} for r in regions]
+    status = "".join(STATUS_CODE.get(x.get("status"), "-") for x in rec)
+    delta_t = [None if v is None else round(v, 1) for v in ((x.get("inputs") or {}).get("delta_t_k") for x in rec)]
+    hot = [r.id for r, x in zip(regions, rec) if any(_hot_pixels(x, name) for name in SATELLITES)]
+    hot.sort(key=lambda rid: -(records[rid]["inputs"]["delta_t_k"] or 0.0))   # strongest first
+    full = (MAX_PIXELS, MAX_VIIRS, len(hot))
+    for pixels, viirs, keep in [full, (2, 2, len(hot))] + [(1, 1, n) for n in range(len(hot), -1, -1)]:
+        entry = {"at": iso(slot), "satellites": satellites_read, "status": status, "delta_t": delta_t,
+                 "hot": {rid: _hot_entry(records[rid], slot, pixels, viirs) for rid in hot[:keep]}}
+        if (pixels, viirs, keep) != full:
+            entry["trimmed"] = True
+        text = json.dumps(entry, separators=(",", ":"))
+        if len(text) <= MAX_SLOT_CHARS:
+            break
+    doc = {"date": day, "month": day[:7], "regions": [r.id for r in regions], "slots": {key: text}}
+    doc.update({flag: True for flag, code in (("alert", "A"), ("warning", "W")) if code in status})
+    return doc
+
+
 def process_slot(repo: Repo, regions: tuple[Region, ...], slot: datetime, views: dict, now: datetime, *,
                  humidity: dict[str, float | None], hotspots: Callable[[], list[dict]],
                  cfg: RuleConfig = RuleConfig(), fusion: FusionConfig = FusionConfig()) -> dict:
-    """Every region through the rules and the state machine; slot records, states and transitions in one batch."""
+    """Every region through the rules and the state machine; slot records, states, transitions and the day archive's
+    slot in one batch."""
     states = repo.get_states()
     out = {"statuses": {}, "transitions": 0, "agent_requests": {}, "errors": []}
-    entries = []
+    entries, records = [], {}
     for region in regions:
         doc = states.get(region.id) or {}
         prev = state_from_doc(doc)
@@ -128,9 +190,11 @@ def process_slot(repo: Repo, regions: tuple[Region, ...], slot: datetime, views:
         if state.last_agent_at is not None:
             new["last_agent_at"] = iso(state.last_agent_at)
         entries.append((new, record, [transition_doc(change)] if change else []))
+        records[region.id] = record
         out["statuses"][state.status.value] = out["statuses"].get(state.status.value, 0) + 1
         out["transitions"] += 1 if change else 0
-    repo.save_slots(entries)
+    read = [name for name, v in views.items() if v is not None]
+    repo.save_slots(entries, archive_slot(slot, read, regions, records) if records else None)
     return out
 
 

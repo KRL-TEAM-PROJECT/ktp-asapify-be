@@ -6,6 +6,8 @@ engine_regions/{id}/slots/{YYYYMMDDHHMM}        satellite views, inputs, utiliti
 engine_regions/{id}/hours/{YYYYMMDDHH}          NASA POWER supporting data of that hour
 engine_regions/{id}/transitions/{id}            status changes only
 engine_regions/{id}/verifications/{id}          agent results and the operator decision on each
+engine_days/{YYYY-MM-DD}                        one WIB day for the map's date picker: per slot, every region's status
+                                                and delta T plus hot pixels and nearby VIIRS (geo.archive_slot, < 1 MiB)
 engine_baselines/{id}                           cached POWER baseline table, rebuilt about once a week
 engine_meta/ingestion                           POWER hour every region caught up with, last satellite slot, humidity
                                                 of its hour and waiting agent runs
@@ -17,8 +19,9 @@ from datetime import date, datetime, timedelta
 from typing import Callable
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
-SUMMARY = ("id", "validation_status", "confidence_score", "trigger", "at", "observed_at", "error")
+SUMMARY =("id", "validation_status", "confidence_score", "trigger", "at", "observed_at", "error")
 SLOT_RETENTION = timedelta(days=30)
 SLOTS_PER_HOUR = 6
 
@@ -41,6 +44,7 @@ class FirestoreRepo:
         self.db = db
         self.regions = db.collection("engine_regions")
         self.meta = db.collection("engine_meta")
+        self.archive = db.collection("engine_days")
 
     # --- ingestion ----------------------------------------------------------------------------------------------
     def get_meta(self) -> dict:
@@ -69,9 +73,13 @@ class FirestoreRepo:
         batch.set(ref, doc, merge=True)
         batch.commit()
 
-    def save_slots(self, entries: list[tuple[dict, dict | None, list[dict]]]) -> None:
-        """One slot for every region in one batch: 65 regions x (state + slot record + a transition) < 500 writes."""
+    def save_slots(self, entries: list[tuple[dict, dict | None, list[dict]]], day: dict | None = None) -> None:
+        """One slot for every region in one batch: 65 regions x (state + slot record + a transition) + the day < 500
+        writes."""
         batch = self.db.batch()
+        if day is not None:
+            # merge=True: the slot joins the day's `slots` map; `alert` / `warning` are only ever written as True
+            batch.set(self.archive.document(day["date"]), day, merge=True)
         for doc, record, transitions in entries:
             ref = self.regions.document(doc["id"])
             if record is not None:
@@ -82,7 +90,7 @@ class FirestoreRepo:
                 batch.set(ref.collection("transitions").document(_slot_id(change["observed_at"])), change)
             # merge by top-level field: `latest` is replaced whole, so no key of an older slot record survives in it
             batch.set(ref, doc, merge=list(doc))
-        if entries:
+        if entries or day is not None:
             batch.commit()
 
     # --- reads for operators and the agent ----------------------------------------------------------------------
@@ -94,8 +102,9 @@ class FirestoreRepo:
         snap = self.regions.document(region_id).collection("slots").document(_slot_id(observed_at)).get()
         return snap.to_dict() if snap.exists else None
 
-    def region_detail(self, region_id: str, hours: int) -> dict | None:
-        """State plus the last `hours` of slot records (6 an hour) and of POWER support, oldest first."""
+    def region_detail(self, region_id: str, hours: int, window: tuple[str, str] | None = None) -> dict | None:
+        """State plus slot records (6 an hour) and POWER support, oldest first: the last `hours`, or the slots with
+        start <= observed_at < end when `window` is given (one day: at most 144 slot reads)."""
         ref = self.regions.document(region_id)
         snap = ref.get()
         if not snap.exists:
@@ -104,9 +113,38 @@ class FirestoreRepo:
 
         def latest(name: str, limit: int, field: str = "observed_at") -> list[dict]:
             return [d.to_dict() for d in ref.collection(name).order_by(field, direction=desc).limit(limit).stream()]
-        slots = [{k: v for k, v in s.items() if k != "expire_at"} for s in latest("slots", hours * SLOTS_PER_HOUR)]
-        return {**snap.to_dict(), "slots": slots[::-1], "hours": latest("hours", hours)[::-1],
-                "transitions": latest("transitions", 20), "verifications": latest("verifications", 10, "at")}
+
+        def within(name: str, limit: int, direction=firestore.Query.ASCENDING) -> list[dict]:
+            q = (ref.collection(name).where(filter=FieldFilter("observed_at", ">=", window[0]))
+                 .where(filter=FieldFilter("observed_at", "<", window[1]))
+                 .order_by("observed_at", direction=direction).limit(limit))
+            return [d.to_dict() for d in q.stream()]
+        if window is None:
+            slots, power = latest("slots", hours * SLOTS_PER_HOUR)[::-1], latest("hours", hours)[::-1]
+            transitions = latest("transitions", 20)
+        else:
+            slots, power = within("slots", 24 * SLOTS_PER_HOUR), within("hours", 24)
+            transitions = within("transitions", 20, desc)
+        return {**snap.to_dict(), "slots": [{k: v for k, v in s.items() if k != "expire_at"} for s in slots],
+                "hours": power, "transitions": transitions, "verifications": latest("verifications", 10, "at")}
+
+    # --- day archive --------------------------------------------------------------------------------------------
+    def get_day(self, day: str) -> dict | None:
+        snap = self.archive.document(day).get()
+        return snap.to_dict() if snap.exists else None
+
+    def list_days(self, month: str) -> list[dict]:
+        """Calendar flags of one month's archived days (only those fields are read back)."""
+        q = self.archive.where(filter=FieldFilter("month", "==", month)).select(["date", "alert", "warning"])
+        return [{"date": d.get("date"), "alert": bool(d.get("alert")), "warning": bool(d.get("warning"))}
+                for d in (s.to_dict() for s in q.stream())]
+
+    def day_range(self) -> tuple[str | None, str | None]:
+        """First and last archived day: two one-document reads."""
+        def edge(direction) -> str | None:
+            docs = list(self.archive.order_by("date", direction=direction).select(["date"]).limit(1).stream())
+            return docs[0].to_dict().get("date") if docs else None
+        return edge(firestore.Query.ASCENDING), edge(firestore.Query.DESCENDING)
 
     # --- agent --------------------------------------------------------------------------------------------------
     def agent_calls(self, day: date) -> int:

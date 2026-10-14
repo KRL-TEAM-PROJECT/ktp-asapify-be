@@ -48,7 +48,7 @@ class FakeRepo:
     """In-memory Repo (ingest.py, geo.py) + the agent and decision parts of FirestoreRepo."""
     def __init__(self):
         self.docs, self.baselines, self.hours, self.slots, self.transitions, self.meta_doc = {}, {}, {}, {}, {}, {}
-        self.verifications, self.quota, self.alerts, self.audit = {}, {}, {}, []
+        self.verifications, self.quota, self.alerts, self.audit, self.days = {}, {}, {}, [], {}
 
     def get_meta(self):
         return dict(self.meta_doc)
@@ -69,12 +69,16 @@ class FakeRepo:
         self.docs.setdefault(doc["id"], {}).update(doc)
         self.hours.setdefault(doc["id"], []).extend(hours)
 
-    def save_slots(self, entries):
+    def save_slots(self, entries, day=None):
         for doc, record, transitions in entries:
             self.docs.setdefault(doc["id"], {}).update(doc)   # top-level fields replaced whole, like merge=list(doc)
             if record is not None:
                 self.slots.setdefault(doc["id"], []).append(record)
             self.transitions.setdefault(doc["id"], []).extend(transitions)
+        if day is not None:   # like merge=True: the slot joins the `slots` map, other fields are replaced
+            stored = self.days.setdefault(day["date"], {"slots": {}})
+            stored.update({k: v for k, v in day.items() if k != "slots"})
+            stored["slots"].update(day["slots"])
 
     def get_region(self, region_id):
         return self.docs.get(region_id)
@@ -82,12 +86,26 @@ class FakeRepo:
     def get_slot(self, region_id, observed_at):
         return next((s for s in self.slots.get(region_id, []) if s["observed_at"] == observed_at), None)
 
-    def region_detail(self, region_id, hours):
+    def region_detail(self, region_id, hours, window=None):
         doc = self.docs.get(region_id)
-        return None if doc is None else {**doc, "slots": self.slots.get(region_id, [])[-hours * 6:],
-                                         "hours": self.hours.get(region_id, [])[-hours:],
-                                         "transitions": self.transitions.get(region_id, [])[::-1],
-                                         "verifications": self.verifications.get(region_id, [])[::-1]}
+        if doc is None:
+            return None
+        slots = self.slots.get(region_id, [])
+        slots = [s for s in slots if window[0] <= s["observed_at"] < window[1]] if window else slots[-hours * 6:]
+        return {**doc, "slots": slots, "hours": self.hours.get(region_id, [])[-hours:],
+                "transitions": self.transitions.get(region_id, [])[::-1],
+                "verifications": self.verifications.get(region_id, [])[::-1]}
+
+    def get_day(self, day):
+        return self.days.get(day)
+
+    def list_days(self, month):
+        return [{"date": d["date"], "alert": bool(d.get("alert")), "warning": bool(d.get("warning"))}
+                for d in self.days.values() if d["month"] == month]
+
+    def day_range(self):
+        keys = sorted(self.days)
+        return (keys[0], keys[-1]) if keys else (None, None)
 
     def agent_calls(self, day):
         return self.quota.get(day, 0)
@@ -226,3 +244,29 @@ def test_operator_lists_regions_and_reads_one_with_its_slots(api):
     assert c.get(f"/api/v1/operator/regions/{known}?hours=500").status_code >= 400
     assert c.get("/api/v1/operator/regions/R9.99S999.999E").status_code == 404
     assert c.get("/api/v1/operator/regions/not-a-region").status_code == 400
+
+
+def test_operator_reads_the_day_archive_and_a_region_by_day(api):
+    app.dependency_overrides[require_operator] = lambda: {"uid": "test", "email": "operator@example.test"}
+    c = TestClient(app, raise_server_exceptions=False)
+    ids = [r.id for r in load_regions()]
+    slot = {"at": "2026-10-11T18:10:00Z", "satellites": ["himawari9", "gk2a"], "status": "S" * len(ids),
+            "delta_t": [0.4] * len(ids), "hot": {}}
+    older = {**slot, "at": "2026-10-11T18:00:00Z", "status": "S" * (len(ids) - 1)}   # written with another regions file
+    api.days["2026-10-12"] = {"date": "2026-10-12", "month": "2026-10", "regions": ids, "alert": True,
+                              "slots": {"0110": json.dumps(slot), "0100": json.dumps(older)}}
+    assert c.get("/api/v1/operator/days?month=2026-10").json() == {
+        "first": "2026-10-12", "last": "2026-10-12", "days": [{"date": "2026-10-12", "alert": True, "warning": False}]}
+    assert c.get("/api/v1/operator/days?month=2026-11").json()["days"] == []
+    assert c.get("/api/v1/operator/days?month=2026-13").status_code == 400
+    day = c.get("/api/v1/operator/days/2026-10-12").json()
+    assert day["regions"] == ids and day["slots"] == [{"key": "0110", **slot}]   # the misaligned slot is left out
+    assert c.get("/api/v1/operator/days/2026-10-13").json()["error"]["code"] == "NOT_FOUND"
+    assert c.get("/api/v1/operator/days/2026-02-30").status_code == 400
+    known = ids[0]
+    api.docs[known] = {"id": known, "status": "SAFE"}
+    api.slots[known] = [{"observed_at": t} for t in ("2026-10-11T16:50:00Z", "2026-10-11T17:00:00Z",
+                                                     "2026-10-12T16:50:00Z", "2026-10-12T17:00:00Z")]
+    detail = c.get(f"/api/v1/operator/regions/{known}?date=2026-10-12").json()   # 00:00-23:50 WIB on 12 October
+    assert [s["observed_at"] for s in detail["slots"]] == ["2026-10-11T17:00:00Z", "2026-10-12T16:50:00Z"]
+    assert c.get(f"/api/v1/operator/regions/{known}?date=12-10-2026").status_code == 400

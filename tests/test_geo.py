@@ -1,4 +1,6 @@
-"""Geostationary engine: contextual anomaly, two-satellite fusion, slot choice and the 10-minute cycle, all offline."""
+"""Geostationary engine: contextual anomaly, two-satellite fusion, slot choice, the 10-minute cycle and its day
+archive, all offline."""
+import json
 import math
 from datetime import datetime, timedelta, timezone
 
@@ -6,11 +8,11 @@ import httpx
 import numpy as np
 import pytest
 
-from asapify_engine import firms, openmeteo, satellites
+from asapify_engine import firms, geo, openmeteo, satellites
 from asapify_engine.canonical import Quality
-from asapify_engine.contextual import RegionThermal, region_thermal
-from asapify_engine.fusion import FusionConfig, fuse, power_support, solar_elevation_deg, viirs_support
-from asapify_engine.geo import pick_slot, run_geo_cycle
+from asapify_engine.contextual import MAX_PIXELS, RegionThermal, region_thermal
+from asapify_engine.fusion import FusionConfig, fuse, power_support, solar_elevation_deg, viirs_near, viirs_support
+from asapify_engine.geo import archive_key, archive_slot, day_window, pick_slot, run_geo_cycle
 from test_engine_ingest import REGIONS, FakeRepo
 
 UTC = timezone.utc
@@ -19,11 +21,11 @@ DAY = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)       # about 12:30 local solar t
 CENTRE = (REGIONS[0].lat, REGIONS[0].lon)
 
 
-def view(anomaly=1.0, hot=False, cloud=0.1, lat=-1.0, lon=113.75):
+def view(anomaly=1.0, hot=False, cloud=0.1, lat=-1.0, lon=113.75, pixels=()):
     return RegionThermal(n_pixels=400, n_clear=round(400 * (1 - cloud)), cloud_fraction=cloud, n_peat=100,
                          n_peat_clear=round(100 * (1 - cloud)), background_k=2.0, background_mad_k=0.5,
                          max_anomaly_k=anomaly, max_z=anomaly / 0.5, n_hot=1 if hot else 0, n_hot_peat=1 if hot else 0,
-                         hot_on_peat=True, hot_lat=lat, hot_lon=lon, mwir_k=300.0, lwir_k=297.0)
+                         hot_on_peat=True, hot_lat=lat, hot_lon=lon, mwir_k=300.0, lwir_k=297.0, hot_pixels=pixels)
 
 
 def everywhere(**kw):
@@ -93,6 +95,20 @@ def test_thin_cirrus_is_not_fire_like_and_clouds_are_counted():
     assert empty.max_anomaly_k is None and empty.cloud_fraction == 1.0 and empty.n_hot == 0
 
 
+def test_contextual_keeps_the_strongest_hot_pixels_for_the_map():
+    mwir, lwir, peat, lat, lon = grid()
+    for i, bt in enumerate((312.0, 330.0, 308.0, 325.0, 315.0, 320.0, 310.0)):   # seven fires in one cell
+        mwir[2 + 2 * i, 3] = bt
+    result = region_thermal(mwir, lwir, peat, lat, lon)
+    assert result.n_hot == 7 and len(result.hot_pixels) == MAX_PIXELS == 5
+    strengths = [p[2] for p in result.hot_pixels]
+    assert strengths == sorted(strengths, reverse=True) and strengths[-1] > 10   # the two weakest are left out
+    assert result.hot_pixels[0][:2] == (result.hot_lat, result.hot_lon)
+    stored = result.summary()["hot_pixels"]                                       # Firestore has no nested arrays
+    assert stored[0] == {"lat": result.hot_lat, "lon": result.hot_lon, "anomaly_k": strengths[0]}
+    assert region_thermal(*grid()).summary()["hot_pixels"] == []
+
+
 def test_a_noisy_background_needs_a_significant_anomaly():
     mwir, lwir, peat, lat, lon = grid()
     lwir += np.random.default_rng(1).normal(0, 2.0, lwir.shape)   # delta_bt varies by about 2 K across the cell
@@ -147,6 +163,21 @@ def test_viirs_and_power_support_only_a_possible_hotspot():
     quiet = fuse({"himawari9": view(1.0), "gk2a": view(1.2)}, night=True, slot=NIGHT, centre=CENTRE,
                  hotspots=[hotspot(1.0, 1.0)], power=recent)
     assert quiet.support == {} and "two_satellites_quiet" in quiet.flags
+
+
+def test_viirs_near_lists_the_detections_beside_any_hot_pixel():
+    cfg = FusionConfig()
+    rows = [hotspot(9.0, 2.0), hotspot(1.0, 1.0), hotspot(30.0, 1.0), hotspot(1.0, 13.0), hotspot(0.5, 1.0, "l")]
+    near = viirs_near(rows, [(-1.0, 113.75)], NIGHT, cfg)
+    assert [v["distance_km"] for v in near] == [1.0, 9.0]     # nearest first; too far, too old, low confidence: out
+    assert near[0] == {"lat": -1.0, "lon": 113.759, "acquired_at": "2026-10-11T19:10:00Z", "confidence": "n",
+                       "distance_km": 1.0}
+    east = (-1.0, 113.75 + math.degrees(30.0 / 6371.0) / math.cos(math.radians(1.0)))   # a second hot pixel, 30 km east
+    assert len(viirs_near(rows, [(-1.0, 113.75), east], NIGHT, cfg)) == 3
+    fused = fuse({"himawari9": view(9.0, True, pixels=((-1.0, 113.75, 9.0), (*east, 4.0))), "gk2a": view(8.0, True)},
+                 night=True, slot=NIGHT, centre=CENTRE, hotspots=rows)
+    assert len(fused.viirs) == 3 and fused.support["viirs_support"] == 1.0   # the support stays at the strongest pixel
+    assert fuse({"himawari9": view(), "gk2a": view()}, night=True, slot=NIGHT, centre=CENTRE, hotspots=rows).viirs == ()
 
 
 def test_night_follows_the_sun():
@@ -291,6 +322,53 @@ def test_power_support_comes_from_the_region_document():
     cycle(repo, {"himawari9": everywhere(anomaly=9.0, hot=True), "gk2a": everywhere(anomaly=9.0, hot=True)})
     doc = repo.docs[REGIONS[0].id]
     assert doc["latest"]["support"] == {"power_support": 1.0} and doc["power"]["delta_t_k"] == 3.5
+
+
+def test_every_slot_is_archived_in_its_wib_day_with_hot_pixels_and_viirs():
+    def hot_views(anomaly, pixels):
+        return {r.id: view(anomaly, True, lat=r.lat, lon=r.lon,
+                           pixels=((r.lat, r.lon, anomaly), (r.lat - 0.01, r.lon + 0.01, anomaly - 2)) if pixels else ())
+                for r in REGIONS}
+
+    repo = FakeRepo()
+    cycle(repo, {"himawari9": hot_views(9.0, True), "gk2a": hot_views(8.5, False)},
+          hotspots=lambda *a: [hotspot(1.0, -1.0)])                      # one VIIRS fire, 1 km from the first region
+    assert archive_key(NIGHT) == ("2026-10-12", "0110")                   # 18:10 UTC = 01:10 WIB on 12 October
+    day = repo.days["2026-10-12"]
+    assert day["month"] == "2026-10" and day["alert"] is True and "warning" not in day
+    assert day["regions"] == [r.id for r in REGIONS] and list(day["slots"]) == ["0110"]
+    slot = json.loads(day["slots"]["0110"])
+    assert slot["at"] == "2026-10-11T18:10:00Z" and slot["satellites"] == ["himawari9", "gk2a"]
+    assert slot["status"] == "AAA" and slot["delta_t"] == [8.5, 8.5, 8.5] and "trimmed" not in slot
+    first = slot["hot"][REGIONS[0].id]
+    assert first["himawari9"] == [[-1.0, 113.75, 9.0], [-1.01, 113.76, 7.0]] and first["gk2a"] == []
+    assert first["view"] == "two_satellites_agree"
+    assert first["viirs"] == [[-1.0, 113.759, -60]]                       # an hour before the slot
+    assert slot["hot"][REGIONS[1].id]["viirs"] == []
+    assert repo.slots[REGIONS[0].id][-1]["viirs"][0]["distance_km"] == 1.0   # the slot record keeps the full entry
+    cycle(repo, {"himawari9": everywhere(), "gk2a": everywhere()}, now=NIGHT + timedelta(minutes=20))
+    assert list(day["slots"]) == ["0110", "0120"] and day["alert"] is True   # a quiet slot keeps the day's mark
+    assert json.loads(day["slots"]["0120"])["status"] == "SSS"
+    assert archive_key(datetime(2026, 10, 11, 16, 50, tzinfo=UTC)) == ("2026-10-11", "2350")
+    assert day_window("2026-10-12") == ("2026-10-11T17:00:00Z", "2026-10-12T17:00:00Z")
+
+
+def test_a_long_slot_loses_detail_but_never_a_status(monkeypatch):
+    viirs = [{"lat": -1.0, "lon": 113.75, "acquired_at": "2026-10-11T17:10:00Z", "confidence": "h",
+              "distance_km": 0.1}] * 5
+    records = {r.id: {"status": "ALERT", "inputs": {"delta_t_k": 9.0 - i}, "flags": ["two_satellites_agree"],
+                      "viirs": viirs, "views": {name: {"hot_pixels": [{"lat": r.lat, "lon": r.lon, "anomaly_k": 9.0}] * 5}
+                                                for name in ("himawari9", "gk2a")}}
+               for i, r in enumerate(REGIONS)}
+    full = json.loads(archive_slot(NIGHT, ["himawari9", "gk2a"], tuple(REGIONS), records)["slots"]["0110"])
+    assert "trimmed" not in full and len(full["hot"][REGIONS[0].id]["himawari9"]) == 5
+    monkeypatch.setattr(geo, "MAX_SLOT_CHARS", 330)
+    text = archive_slot(NIGHT, ["himawari9", "gk2a"], tuple(REGIONS), records)["slots"]["0110"]
+    short = json.loads(text)
+    assert len(text) <= 330 and short["trimmed"] is True and short["status"] == "AAA"
+    kept = list(short["hot"])
+    assert 0 < len(kept) < 3 and kept == [r.id for r in REGIONS][:len(kept)]   # the strongest regions keep detail
+    assert all(len(h["himawari9"]) == 1 and len(h["viirs"]) == 1 for h in short["hot"].values())
 
 
 def test_waiting_agent_runs_go_first_and_failures_are_not_retried():
