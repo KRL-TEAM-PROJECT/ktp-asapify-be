@@ -94,7 +94,7 @@ def verify_backend(deploy):
         if not any(c["type"] == "Ready" and c["status"] == "True" for c in service["status"]["conditions"]):
             raise RuntimeError(f"{name} is not Ready.")
         settings = {e["name"]: e.get("value") for e in service["spec"]["template"]["spec"]["containers"][0].get("env", [])}
-        for key, value in {"NOTIFICATION_MODE": "dry_run", "FCM_ENABLED": "false", "TELEGRAM_ENABLED": "false"}.items():
+        for key, value in {"NOTIFICATION_MODE": "dry_run", "TELEGRAM_ENABLED": "false"}.items():
             if settings.get(key) != value:
                 raise RuntimeError(f"{name}: expected {key}={value}.")
         services[name] = service

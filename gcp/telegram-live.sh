@@ -62,4 +62,4 @@ curl -sS -K - <<CFG | head -c 400; echo
 url = "https://api.telegram.org/bot$TOKEN/getWebhookInfo"
 CFG
 unset TOKEN HOOK
-echo "Telegram is live. On the Regions page open Telegram groups, add the bot to your group, then publish one verified region."
+echo "Telegram is live. On the Regions page open Telegram groups, add the bot to your group and paste its invite link, then publish one verified region."

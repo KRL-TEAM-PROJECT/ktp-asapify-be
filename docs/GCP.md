@@ -113,7 +113,7 @@ The engine writes its own data: Cloud Scheduler calls the worker's geo tick ever
 (`gcp/geo-setup.sh`, see [ENGINE.md](ENGINE.md)).
 
 The old inline Telegram path was replaced by a multi-channel outbox. Follow [NOTIFICATIONS.md](NOTIFICATIONS.md)
-for the worker, Cloud Tasks, subscriber consent, the Telegram group, exercise push, Firestore indexes and cloud tests.
+for the worker, Cloud Tasks, the Telegram group, the Firestore index and cloud tests.
 
 ## Remaining required work
 

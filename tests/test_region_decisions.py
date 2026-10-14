@@ -11,7 +11,7 @@ from asapify_api.core import utc_now
 from asapify_api.engine_routes import get_engine_repo
 from asapify_engine.regions import load_regions
 from test_engine_ingest import FakeRepo
-from test_notifications import FakeDB, count, fanout_db
+from test_notifications import count, fanout_db
 from test_verifier import RECORD, SETTINGS, TOOL, YAML_OK, fake_run
 
 REGION = load_regions()[0]
@@ -59,7 +59,7 @@ def test_region_without_an_assessed_hour_cannot_be_verified(repo):
 
 def published(repo, monkeypatch, caption="ALERT: thermal indication; verify in the field."):
     store = Mock()
-    store.fan_out.return_value = {"state": "outbox_saved", "recipients": 3, "jobs": 3}
+    store.fan_out.return_value = {"state": "outbox_saved", "groups": 1, "jobs": 1}
     monkeypatch.setattr(engine_routes, "get_notification_store", lambda: store)
     monkeypatch.setattr(engine_routes, "get_tasks", lambda: object())
     monkeypatch.setattr(engine_routes, "enqueue_pending", lambda store, tasks: 3)
@@ -72,7 +72,7 @@ def published(repo, monkeypatch, caption="ALERT: thermal indication; verify in t
 def test_publish_creates_one_alert_and_fans_out_once(repo, monkeypatch):
     c, store, vid, body = published(repo, monkeypatch)
     r = c.post(f"/api/v1/operator/regions/{REGION.id}/decision", json=body)
-    assert r.status_code == 201 and r.json()["notifications"]["recipients"] == 3
+    assert r.status_code == 201 and r.json()["notifications"]["groups"] == 1
     alert_id = f"A-{REGION.id}-{vid}"
     alert = repo.alerts[alert_id]
     assert alert["region_id"] == REGION.id and alert["province"] == REGION.province and alert["purpose"] == "emergency"
@@ -101,17 +101,14 @@ def test_decision_validation(repo, monkeypatch):
     assert c.post(url, json={**body, "status": "SAFE"}).status_code == 400   # the decision cannot set a level
 
 
-def test_region_alert_fan_out_reaches_subscribers_and_updates_the_verification():
+def test_region_alert_fan_out_reaches_the_groups_and_updates_the_verification():
     from asapify_api.notification_store import NotificationStore
-    db, source = FakeDB(), f"engine_regions/{REGION.id}/verifications/20261013T060000Z"
-    db.docs.update(fanout_db(4).docs)
+    db, source = fanout_db(2), f"engine_regions/{REGION.id}/verifications/20261013T060000Z"
     db.docs["alerts/A-test"].update({"region_id": REGION.id, "source_path": source})
     db.docs[source] = {"id": "20261013T060000Z", "decision": {"action": "publish", "notifications": {}}}
     summary = NotificationStore(db).fan_out("A-test")
-    assert summary == {"state": "outbox_saved", "recipients": 4, "groups": 0, "jobs": 4}
-    assert db.docs[source]["decision"]["notifications"] == summary and count(db, "notification_inbox") == 4
-    inbox = next(v for k, v in db.docs.items() if k.startswith("notification_inbox/"))
-    assert inbox["region_id"] == REGION.id
+    assert summary == {"state": "outbox_saved", "groups": 2, "jobs": 2}
+    assert db.docs[source]["decision"]["notifications"] == summary and count(db, "notification_jobs") == 2
 
 
 def test_worker_cycles_pass_the_verifier_and_firms_only_when_configured(repo, monkeypatch):

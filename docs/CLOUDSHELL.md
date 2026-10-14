@@ -2,7 +2,7 @@
 
 Fixed target: project `hack2skill-510921`, Jakarta region `asia-southeast2`, database `asapify`.
 The runner handles the API, worker, queue, indexes and the recovery scheduler. Notifications stay `dry_run`;
-Telegram and FCM are disabled. This deployment does not implement the satellite/AI pipeline.
+Telegram is disabled until `gcp/telegram-live.sh`. This deployment does not implement the satellite/AI pipeline.
 
 ## Status, 13 October 2026
 
@@ -121,12 +121,10 @@ VITE_FIREBASE_AUTH_DOMAIN=hack2skill-510921.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=hack2skill-510921
 VITE_FIREBASE_APP_ID=COPY_FROM_WEB_APP
 VITE_FIREBASE_MESSAGING_SENDER_ID=950889990251
-VITE_FIREBASE_VAPID_KEY=
 VITE_PROVINCES_LAYER_URL=/mock/provinces.geojson
 ```
 
-Use the `authDomain` the Firebase config actually gives if it differs. VAPID may stay empty while push is
-disabled. The web configuration is a public identifier, not an Admin credential.
+Use the `authDomain` the Firebase config actually gives if it differs. The web configuration is a public identifier, not an Admin credential.
 Keep this local configuration out of git. See also `docs/GCP.md` in the frontend repository.
 
 From the backend repository root:
@@ -145,12 +143,12 @@ Do not use this stage on an `asapify` database that another application uses wit
 replaces the project's default site content with ASAPify; make sure that is the intended site. Review the plan first.
 
 On success, the runner checks HTTP for the home page, `/notifications`, health through the rewrite, and refusal of
-anonymous operator access. Expected URL after success: `https://hack2skill-510921.web.app/notifications`.
+anonymous operator access. Expected URL after success: `https://hack2skill-510921.web.app/join`.
 Do not call it live before the deployment and those checks pass.
 
 ## 4. Verify accounts and data
 
-Sign in with Google as a subscriber, open `/notifications`, then test saving preferences and the inbox. An admin
+Open `/join` without signing in; it lists the Telegram groups that have an invite link. An admin
 must check the UID/email in Firebase Authentication before using `tools/set_operator.py` to grant the
 operator role. The runner never grants a role to any user account automatically.
 
