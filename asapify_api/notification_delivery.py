@@ -36,26 +36,23 @@ def send(job, inbox, profile):
     # Enforce at the last possible point as well as in planning/claiming.
     if channel in ('fcm', 'web_push') and inbox['purpose'] == 'emergency':
         return outcome('blocked', 'FCM_EMERGENCY_PROHIBITED')
-    if channel not in ('telegram', 'fcm', 'web_push'):
+    if channel not in ('telegram_group', 'fcm', 'web_push'):
         return outcome('blocked', 'ADAPTER_PENDING')
     if os.getenv('NOTIFICATION_MODE', 'dry_run') != 'live':
         return outcome('simulated', 'DRY_RUN_NO_SEND')
     origin = os.getenv('ASAPIFY_PUBLIC_ORIGIN', '').rstrip('/')
     if not origin.startswith('https://'):
         return outcome('blocked', 'PUBLIC_ORIGIN_NOT_CONFIGURED')
-    link = origin + '/notifications?open=' + inbox['id']
-    if channel == 'telegram':
+    if channel == 'telegram_group':
         token = os.getenv('TELEGRAM_BOT_TOKEN')
-        chat = profile.get('telegram_chat_id')
+        chat = profile.get('chat_id')   # profile = the linked group's record
         if os.getenv('TELEGRAM_ENABLED') != 'true' or not token or not chat:
             return outcome('blocked', 'TELEGRAM_NOT_CONFIGURED')
+        body = {'chat_id': chat, 'text': text_message(inbox), 'link_preview_options': {'is_disabled': True}}
         try:
             # Text only: no mandatory photo fetch on weak data networks; no HTML injection.
             with httpx.Client(timeout=15, follow_redirects=False) as client:
-                response = client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={
-                    'chat_id': chat, 'text': text_message(inbox),
-                    'link_preview_options': {'is_disabled': True},
-                    'reply_markup': {'inline_keyboard': [[{'text': 'Open & confirm receipt', 'url': link}]]}})
+                response = client.post(f'https://api.telegram.org/bot{token}/sendMessage', json=body)
             data = response.json()
             if response.is_success and data.get('ok') and data.get('result', {}).get('message_id'):
                 return outcome('accepted', provider_id=data['result']['message_id'])
@@ -64,6 +61,7 @@ def send(job, inbox, profile):
             return outcome('unknown', 'DELIVERY_UNCERTAIN')
         except Exception:
             return outcome('unknown', 'DELIVERY_UNCERTAIN')
+    link = origin + '/notifications?open=' + inbox['id']
     if os.getenv('FCM_ENABLED') != 'true' or not profile.get('fcm_token'):
         return outcome('blocked', 'FCM_NOT_CONFIGURED')
     try:

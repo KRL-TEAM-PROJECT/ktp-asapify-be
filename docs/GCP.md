@@ -113,8 +113,7 @@ The engine writes its own data: Cloud Scheduler calls the worker's geo tick ever
 (`gcp/geo-setup.sh`, see [ENGINE.md](ENGINE.md)).
 
 The old inline Telegram path was replaced by a multi-channel outbox. Follow [NOTIFICATIONS.md](NOTIFICATIONS.md)
-for the worker, Cloud Tasks, subscriber consent, Telegram DM, exercise push, Firestore indexes and cloud tests.
-Do not use the old tg_chats/sendPhoto instructions for the v1 path.
+for the worker, Cloud Tasks, subscriber consent, the Telegram group, exercise push, Firestore indexes and cloud tests.
 
 ## Remaining required work
 
@@ -122,7 +121,7 @@ Do not use the old tg_chats/sendPhoto instructions for the v1 path.
 2. Calibrate the Himawari/GK2A thresholds against more VIIRS nights and daytime slots (one night checked, see ENGINE.md); add night streaks and neighbour support.
 3. Complete the ADK/Gemini agent with VIIRS/imagery evidence and tool limits; drop the old path's ToPeCAl dependency.
 4. Complete alert closing, outbox recovery, historical decision snapshots and signed image URL refresh.
-5. Test real tokens, concurrent Firestore transactions, Telegram egress to demo recipients, the container build and the Firebase rewrite.
+5. Test real tokens, concurrent Firestore transactions, an alert in the Telegram group, the container build and the Firebase rewrite.
 6. Only then add Cloud Scheduler for jobs that are runnable and idempotent.
 
 Do not describe this stage as an operational early-warning system or a validated end-to-end satellite/AI demo.

@@ -10,8 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .core import PROVINCES, as_time, iso
 
-Channel = Literal['telegram', 'fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh']
-CHANNELS = ('telegram', 'fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh')
+# Subscriber channels. Telegram is not one of them: alerts go to the linked Telegram groups (group_job below).
+Channel = Literal['fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh']
+CHANNELS = ('fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh')
 FUTURE = {'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh'}
 CONSENT_VERSION = 'notification-v1-2026-10-09'
 
@@ -41,8 +42,7 @@ class Preferences(BaseModel):
 def capabilities() -> list[dict]:
     live = os.getenv('NOTIFICATION_MODE', 'dry_run') == 'live'
     return [{'channel': c, 'implemented': c not in FUTURE,
-             'enabled': live and (os.getenv('TELEGRAM_ENABLED') == 'true' if c == 'telegram'
-                                 else os.getenv('FCM_ENABLED') == 'true' if c in ('fcm', 'web_push') else False),
+             'enabled': live and os.getenv('FCM_ENABLED') == 'true' and c in ('fcm', 'web_push'),
              'restriction': 'NON_EMERGENCY_ONLY' if c in ('fcm', 'web_push') else
                             'HARDWARE_REQUIRED' if c in ('lora', 'bluetooth_mesh') else
                             'ADAPTER_PENDING' if c in FUTURE else None}
@@ -64,7 +64,7 @@ def plan_recipient(alert: dict, recipient: dict, now: str, escalation_seconds: i
     inbox = {**alert, 'id': inbox_id, 'alert_id': alert['id'], 'recipient_id': rid,
              'acknowledged_at': None, 'created_at': now}
     jobs = []
-    selected = recipient.get('channels', [])
+    selected = [c for c in recipient.get('channels', []) if c in CHANNELS]   # older profiles may still say telegram
     push_chosen = 'web_push' if 'web_push' in selected else 'fcm'
     for channel in selected:
         if channel in ('fcm', 'web_push') and channel != push_chosen:
@@ -74,8 +74,6 @@ def plan_recipient(alert: dict, recipient: dict, now: str, escalation_seconds: i
             reason = 'FCM_EMERGENCY_PROHIBITED'
         elif channel in FUTURE:
             reason = 'HARDWARE_REQUIRED' if channel in ('lora', 'bluetooth_mesh') else 'ADAPTER_PENDING'
-        elif channel == 'telegram' and not recipient.get('telegram_chat_id'):
-            reason = 'TELEGRAM_NOT_LINKED'
         elif channel in ('fcm', 'web_push') and not recipient.get('fcm_token'):
             reason = 'DEVICE_NOT_REGISTERED'
         due = as_time(now)
@@ -89,6 +87,16 @@ def plan_recipient(alert: dict, recipient: dict, now: str, escalation_seconds: i
                      'not_before': iso(due), 'expires_at': alert['expires_at'], 'created_at': now,
                      'provider_id': None, 'attempts': 0, 'generation': 0})
     return inbox, jobs
+
+
+def group_job(alert: dict, group_id: str, now: str) -> dict:
+    """One message to one linked Telegram group. A group has no inbox or consent record: whoever reads the group
+    reads the alert. The text travels in the job because there is no inbox entry to read it from."""
+    return {'id': key(alert['id'], 'telegram_group', group_id), 'alert_id': alert['id'], 'inbox_id': None,
+            'recipient_id': None, 'group_id': group_id, 'channel': 'telegram_group', 'stage': 'initial',
+            'status': 'pending', 'error': None, 'text': alert['text'], 'purpose': alert['purpose'],
+            'province': alert['province'], 'not_before': now, 'expires_at': alert['expires_at'], 'created_at': now,
+            'provider_id': None, 'attempts': 0, 'generation': 0}
 
 
 def dispatch_guard(job: dict, inbox: dict, profile: dict, now: str) -> str | None:
