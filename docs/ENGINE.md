@@ -98,7 +98,7 @@ region only Himawari saw (55 km from GK2A's warmest pixel, no VIIRS) comes out D
 strongest anomaly was R3.50S105.625E (South Sumatra): 39 K (Himawari) and 42 K (GK2A), 604 VIIRS detections in the
 cell. Two choices come from this slot. The first version (ΔBT only, peat pixels only) had 6 of its 11 hot Himawari
 regions without any VIIRS fire nearby (thin cirrus); the 3.9 µm test removed all 6. Scoring the whole cell instead
-of the peat pixels alone then found 10 of the 14 regions VIIRS saw burning instead of 4, because most fire pixels sat
+of the peat pixels alone then found 10 regions with a hot pixel next to a VIIRS fire instead of 4, because most fire pixels sat
 just outside the simplified KHG polygons. One slot is not a calibration: repeat with more nights and daytime slots
 before trusting any number.
 

@@ -9,7 +9,7 @@ delta_bt = BT(3.8-3.9 um) - BT(10.4-10.5 um): a small hot source raises the mid-
 long-wave one, while plain surface warming raises both. Thin cirrus also raises delta_bt, by cooling 10.4 um, so a
 pixel only counts when the 3.9 um channel itself rose above the background too (the MODIS/VIIRS T4 test). On the
 11 October 2026 18:10 UTC Himawari slot this test removed all 6 of 11 hot regions that had no VIIRS fire nearby, and
-scoring the whole cell instead of the peat pixels alone found 10 of the 14 regions VIIRS saw burning instead of 4
+scoring the whole cell instead of the peat pixels alone found 10 regions with a hot pixel next to a VIIRS fire instead of 4
 (docs/ENGINE.md, Validation). Pure computation: arrays in, numbers out, no I/O.
 """
 from __future__ import annotations
