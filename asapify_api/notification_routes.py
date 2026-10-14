@@ -1,3 +1,5 @@
+"""Telegram alert groups: operators link a group and set its invite link, the public join page reads the links, the
+webhook links the group, and the worker posts each published alert in it."""
 from __future__ import annotations
 
 import hmac
@@ -8,50 +10,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from .auth import require_operator, require_user
+from .auth import require_operator
 from .core import ApiProblem
 from .notification_delivery import send
-from .notification_policy import CHANNELS, Preferences, capabilities
 from .notification_store import get_notification_store
 from .notification_tasks import enqueue_pending, get_tasks, require_worker
 
 router = APIRouter()
 HexID = Annotated[str, Path(pattern=r'^[a-f0-9]{64}$')]
-
-
-def public_profile(profile):
-    channels = [c for c in profile.get('channels', []) if c in CHANNELS]   # older profiles may still say telegram
-    return {**{k: profile.get(k, [] if k == 'provinces' else False) for k in ('provinces', 'consent', 'exercises')},
-            'channels': channels,
-            'device_registered': bool(profile.get('fcm_token'))}
-
-
-@router.get('/api/v1/notifications/settings')
-def settings(actor=Depends(require_user), store=Depends(get_notification_store)):
-    return {'preferences': public_profile(store.profile(actor['uid'])), 'channels': capabilities(),
-            'mode': os.getenv('NOTIFICATION_MODE', 'dry_run')}
-
-
-@router.put('/api/v1/notifications/preferences')
-def preferences(body: Preferences, actor=Depends(require_user), store=Depends(get_notification_store)):
-    return public_profile(store.preferences(actor, body))
-
-
-class Device(BaseModel):
-    model_config = ConfigDict(extra='forbid', strict=True)
-    token: str = Field(min_length=20, max_length=4096, pattern=r'^[A-Za-z0-9_:\-\.]+$')
-
-
-@router.post('/api/v1/notifications/device')
-def device(body: Device, actor=Depends(require_user), store=Depends(get_notification_store)):
-    store.device(actor['uid'], body.token)
-    return {'registered': True}
-
-
-@router.delete('/api/v1/notifications/device')
-def unlink_device(actor=Depends(require_user), store=Depends(get_notification_store)):
-    store.unlink_device(actor['uid'])
-    return {'registered': False}
+# A Telegram invite link (t.me/+code or t.me/joinchat/code) or a public group's t.me/<username>
+INVITE = r'^https://t\.me/(\+[A-Za-z0-9_-]{8,64}|joinchat/[A-Za-z0-9_-]{8,64}|[A-Za-z][A-Za-z0-9_]{4,31})$'
 
 
 def bot_username():
@@ -59,6 +27,12 @@ def bot_username():
     if not re.fullmatch(r'[A-Za-z0-9_]{5,32}', username):
         raise ApiProblem(503, 'TELEGRAM_NOT_CONFIGURED', 'The Telegram bot is not configured.')
     return username
+
+
+@router.get('/api/v1/telegram/join')
+def join(store=Depends(get_notification_store)):
+    """Public: the groups anyone may join to receive alerts. Nothing but titles and invite links."""
+    return store.join_links()
 
 
 @router.post('/api/v1/notifications/telegram-webhook')
@@ -88,16 +62,6 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     return {'ok': True}  # No outgoing message or disclosure of binding state.
 
 
-@router.get('/api/v1/notifications/inbox')
-def inbox(actor=Depends(require_user), store=Depends(get_notification_store)):
-    return store.inbox(actor['uid'])
-
-
-@router.post('/api/v1/notifications/inbox/{inbox_id}/ack')
-def acknowledge(inbox_id: HexID, actor=Depends(require_user), store=Depends(get_notification_store)):
-    return store.acknowledge(actor['uid'], inbox_id)
-
-
 @router.get('/api/v1/operator/telegram-groups')
 def telegram_groups(actor=Depends(require_operator), store=Depends(get_notification_store)):
     return store.groups()
@@ -107,6 +71,17 @@ def telegram_groups(actor=Depends(require_operator), store=Depends(get_notificat
 def telegram_group_link(actor=Depends(require_operator), store=Depends(get_notification_store)):
     username = bot_username()
     return {'url': f'https://t.me/{username}?startgroup={store.group_link(actor)}', 'expires_in_seconds': 600}
+
+
+class Invite(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    invite_url: str | None = Field(default=None, pattern=INVITE)   # null = not shown on the join page
+
+
+@router.put('/api/v1/operator/telegram-groups/{group_id}')
+def telegram_group_invite(group_id: HexID, body: Invite, actor=Depends(require_operator),
+                          store=Depends(get_notification_store)):
+    return store.set_invite(group_id, body.invite_url)
 
 
 @router.delete('/api/v1/operator/telegram-groups/{group_id}')
@@ -130,8 +105,8 @@ def dispatch(body: Dispatch, store=Depends(get_notification_store)):
     claimed = store.claim(body.job_id)
     if not claimed:
         return {'processed': False}
-    job, item, profile = claimed
-    result = send(job, item, profile)
+    job, group = claimed
+    result = send(job, group)
     store.finish(job, result)
     return {'processed': True, 'status': result['status']}
 

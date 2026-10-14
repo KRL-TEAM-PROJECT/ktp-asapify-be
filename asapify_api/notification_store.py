@@ -1,3 +1,4 @@
+"""Telegram alert groups and their outbox: linked groups, one job per group per published alert, claim and finish."""
 from __future__ import annotations
 
 import os
@@ -10,9 +11,8 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from .core import ApiProblem, as_time, iso, utc_now
-from .notification_policy import CONSENT_VERSION, Preferences, dispatch_guard, group_job, key, plan_recipient
+from .notification_policy import group_job, key
 
-FANOUT_PAGE = 50  # <= 50 x (1 inbox + 7 jobs) = 400 writes, under the 500-write batch limit.
 GROUPS = 'telegram_groups'            # linked Telegram groups, keyed by key(chat id); every alert goes to each
 GROUP_LINKS = 'telegram_group_links'  # one-time codes for linking a group, keyed by key(code)
 
@@ -20,46 +20,6 @@ GROUP_LINKS = 'telegram_group_links'  # one-time codes for linking a group, keye
 class NotificationStore:
     def __init__(self, db):
         self.db = db
-
-    def profile_ref(self, uid):
-        return self.db.collection('notification_recipients').document(key(uid))
-
-    def profile(self, uid):
-        snap = self.profile_ref(uid).get()
-        return snap.to_dict() if snap.exists else {'uid': uid, 'provinces': [], 'channels': [], 'consent': False, 'exercises': False}
-
-    def preferences(self, actor, body: Preferences):
-        data = {**body.model_dump(), 'uid': actor['uid'], 'email': actor['email'],
-                'consent_version': CONSENT_VERSION, 'updated_at': iso(utc_now())}
-        self.profile_ref(actor['uid']).set(data, merge=True)
-        return self.profile(actor['uid'])
-
-    def device(self, uid, token):
-        ref = self.profile_ref(uid)
-        owner = self.db.collection('notification_devices').document(key(token))
-
-        @firestore.transactional
-        def save(tx):
-            old = ref.get(transaction=tx).to_dict() or {}
-            registration = owner.get(transaction=tx)
-            if registration.exists and registration.to_dict()['uid'] != uid:
-                raise ApiProblem(409, 'DEVICE_ALREADY_LINKED', 'Unlink the device from its previous account first.')
-            if old.get('fcm_token') and old['fcm_token'] != token:
-                tx.delete(self.db.collection('notification_devices').document(key(old['fcm_token'])))
-            tx.set(owner, {'uid': uid})
-            tx.set(ref, {'uid': uid, 'fcm_token': token}, merge=True)
-        save(self.db.transaction())
-
-    def unlink_device(self, uid):
-        ref = self.profile_ref(uid)
-
-        @firestore.transactional
-        def remove(tx):
-            profile = ref.get(transaction=tx).to_dict() or {}
-            if profile.get('fcm_token'):
-                tx.delete(self.db.collection('notification_devices').document(key(profile['fcm_token'])))
-            tx.set(ref, {'fcm_token': firestore.DELETE_FIELD}, merge=True)
-        remove(self.db.transaction())
 
     def group_link(self, actor):
         code = secrets.token_urlsafe(24)
@@ -78,7 +38,7 @@ class NotificationStore:
             if not snap.exists or snap.to_dict()['expires_at'] <= iso(utc_now()):
                 return False
             tx.delete(link_ref)
-            tx.set(group_ref, {'id': group_ref.id, 'chat_id': chat, 'title': title[:128],
+            tx.set(group_ref, {'id': group_ref.id, 'chat_id': chat, 'title': title[:128], 'invite_url': None,
                                'linked_by': snap.to_dict()['by'], 'linked_at': iso(utc_now())})
             return True
         return link(self.db.transaction())
@@ -97,9 +57,20 @@ class NotificationStore:
 
     def groups(self):
         rows = [s.to_dict() for s in self.db.collection(GROUPS).stream()]
-        # The chat id stays on the server; the operator sees the group's title.
-        return sorted(({k: r.get(k) for k in ('id', 'title', 'linked_by', 'linked_at')} for r in rows),
+        # The chat id stays on the server; the operator sees the group's title and its invite link.
+        return sorted(({k: r.get(k) for k in ('id', 'title', 'invite_url', 'linked_by', 'linked_at')} for r in rows),
                       key=lambda g: g['linked_at'] or '')
+
+    def join_links(self):
+        """What the public join page shows: the title and invite link of every group that has one."""
+        return [{'title': g['title'], 'invite_url': g['invite_url']} for g in self.groups() if g['invite_url']]
+
+    def set_invite(self, group_id, invite_url):
+        ref = self.db.collection(GROUPS).document(group_id)
+        if not ref.get().exists:
+            raise ApiProblem(404, 'NOT_FOUND', 'Telegram group not found.')
+        ref.update({'invite_url': invite_url})
+        return {k: v for k, v in ref.get().to_dict().items() if k != 'chat_id'}
 
     def unlink_group(self, group_id):
         ref = self.db.collection(GROUPS).document(group_id)
@@ -108,40 +79,18 @@ class NotificationStore:
         ref.delete()
 
     def fan_out(self, alert_id):
-        """Write inbox + channel jobs for every consenting recipient, page by page, after the decision commits.
+        """One job per linked group, after the decision commits.
 
-        The subscriber count never blocks a decision. IDs are deterministic and documents are only
-        created, so a resumed or concurrent run skips what exists and never resets a claimed job.
+        IDs are deterministic and documents are only created, so a resumed or concurrent run skips what exists and
+        never resets a claimed job.
         """
         alert_ref = self.db.collection('alerts').document(alert_id)
         alert = alert_ref.get().to_dict()
-        payload = {'id': alert['id'], 'region_id': alert.get('region_id'),
-                   'province': str(alert['province']),
-                   'text': alert['caption'], 'purpose': alert['purpose'], 'published_at': alert['published_at'],
-                   'expires_at': alert['expires_at'], 'status': alert['status']}
-        query = self.db.collection('notification_recipients').where(
-            filter=FieldFilter('provinces', 'array_contains', payload['province'])).where(
-            filter=FieldFilter('consent', '==', True)).order_by('__name__').limit(FANOUT_PAGE)
-        recipients = jobs = 0
-        last = None
-        while True:
-            page = list((query.start_after(last) if last else query).stream())
-            docs = []
-            for snapshot in page:
-                inbox, planned = plan_recipient(payload, snapshot.to_dict(), payload['published_at'])
-                if inbox:
-                    recipients, jobs = recipients + 1, jobs + len(planned)
-                    docs.append(('notification_inbox', inbox))
-                    docs.extend(('notification_jobs', job) for job in planned)
-            self._create_missing(docs)
-            if len(page) < FANOUT_PAGE:
-                break
-            last = page[-1]
+        payload = {'id': alert['id'], 'province': str(alert['province']), 'text': alert['caption'],
+                   'purpose': alert['purpose'], 'expires_at': alert['expires_at']}
         groups = [s.id for s in self.db.collection(GROUPS).stream()]
-        self._create_missing([('notification_jobs', group_job(payload, g, payload['published_at'])) for g in groups])
-        jobs += len(groups)
-        summary = {'state': 'outbox_saved' if recipients or groups else 'no_recipients', 'recipients': recipients,
-                   'groups': len(groups), 'jobs': jobs}
+        self._create_missing([('notification_jobs', group_job(payload, g, alert['published_at'])) for g in groups])
+        summary = {'state': 'outbox_saved' if groups else 'no_groups', 'groups': len(groups), 'jobs': len(groups)}
         batch = self.db.batch()
         batch.update(alert_ref, {'fanout': 'done', 'notifications': summary})
         # The alert points at the verification document that holds the decision.
@@ -163,8 +112,8 @@ class NotificationStore:
                 batch.commit()
                 return
             except AlreadyExists:
-                continue  # A concurrent run wrote part of this page; read again.
-        raise ApiProblem(503, 'FANOUT_CONFLICT', 'Inbox writes collided; the sweep will resume.')
+                continue  # A concurrent run wrote part of this batch; read again.
+        raise ApiProblem(503, 'FANOUT_CONFLICT', 'Outbox writes collided; the sweep will resume.')
 
     def resume_fanouts(self, limit=20):
         """Finish publications whose fan-out stopped after the decision was saved."""
@@ -176,32 +125,6 @@ class NotificationStore:
             except Exception:
                 continue  # Retried on the next sweep; one bad alert must not block the others.
         return done
-
-    def inbox(self, uid):
-        # Composite index is checked in under gcp/firestore.indexes.json.
-        items = list(self.db.collection('notification_inbox').where(
-            filter=FieldFilter('recipient_id', '==', key(uid))).order_by('created_at', direction=firestore.Query.DESCENDING).limit(50).stream())
-        result = []
-        for snap in items:
-            item = snap.to_dict()
-            item.pop('recipient_id', None)
-            result.append(item)
-        return result
-
-    def acknowledge(self, uid, inbox_id):
-        ref = self.db.collection('notification_inbox').document(inbox_id)
-
-        @firestore.transactional
-        def ack(tx):
-            snap = ref.get(transaction=tx)
-            if not snap.exists or snap.to_dict()['recipient_id'] != key(uid):
-                raise ApiProblem(404, 'NOT_FOUND', 'Notification not found.')
-            item = snap.to_dict()
-            at = item.get('acknowledged_at') or iso(utc_now())
-            if not item.get('acknowledged_at'):
-                tx.update(ref, {'acknowledged_at': at})
-            return {'acknowledged_at': at}
-        return ack(self.db.transaction())
 
     def pending(self, limit=100):
         return [s.to_dict() for s in self.db.collection('notification_jobs').where(
@@ -221,24 +144,15 @@ class NotificationStore:
             now = iso(utc_now())
             if job['not_before'] > now:
                 raise ApiProblem(503, 'NOT_DUE', 'The job is not due yet.')
-            if job['channel'] == 'telegram_group':
-                group = self.db.collection(GROUPS).document(job['group_id']).get(transaction=tx).to_dict()
-                alert = self.db.collection('alerts').document(job['alert_id']).get(transaction=tx).to_dict() or {}
-                reason = ('GROUP_UNLINKED' if not group else 'EXPIRED_OR_CLOSED'
-                          if alert.get('status') != 'active' or as_time(job['expires_at']) <= as_time(now) else None)
-                if reason:
-                    tx.update(ref, {'status': 'cancelled', 'error': reason, 'finished_at': now})
-                    return None
-                tx.update(ref, {'status': 'sending', 'started_at': now, 'attempts': job['attempts'] + 1})
-                return job, job, group   # the job carries the text an inbox entry would
-            inbox = self.db.collection('notification_inbox').document(job['inbox_id']).get(transaction=tx).to_dict()
-            profile = self.db.collection('notification_recipients').document(job['recipient_id']).get(transaction=tx).to_dict() or {}
-            reason = dispatch_guard(job, inbox, profile, now)
+            group = self.db.collection(GROUPS).document(job['group_id']).get(transaction=tx).to_dict()
+            alert = self.db.collection('alerts').document(job['alert_id']).get(transaction=tx).to_dict() or {}
+            reason = ('GROUP_UNLINKED' if not group else 'EXPIRED_OR_CLOSED'
+                      if alert.get('status') != 'active' or as_time(job['expires_at']) <= as_time(now) else None)
             if reason:
                 tx.update(ref, {'status': 'cancelled', 'error': reason, 'finished_at': now})
                 return None
             tx.update(ref, {'status': 'sending', 'started_at': now, 'attempts': job['attempts'] + 1})
-            return job, inbox, profile
+            return job, group
         return reserve(self.db.transaction())
 
     def finish(self, job, outcome):
@@ -266,10 +180,9 @@ class NotificationStore:
             filter=FieldFilter('alert_id', '==', alert_id)).stream()]
         result = []
         for r in rows:
-            item = {k: r.get(k) for k in ('id', 'channel', 'stage', 'status', 'error', 'attempts', 'created_at', 'started_at', 'finished_at')}
-            inbox = (self.db.collection('notification_inbox').document(r['inbox_id']).get().to_dict() or {}
-                     if r.get('inbox_id') else {})
-            item['acknowledged_at'] = inbox.get('acknowledged_at')
+            item = {k: r.get(k) for k in ('id', 'channel', 'status', 'error', 'attempts', 'created_at', 'started_at', 'finished_at')}
+            group = self.db.collection(GROUPS).document(r['group_id']).get().to_dict() if r.get('group_id') else None
+            item['group'] = (group or {}).get('title')   # None once the group was unlinked
             result.append(item)
         return result
 

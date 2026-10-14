@@ -158,7 +158,7 @@ before trusting any number.
   high-confidence hotspot. Anything else is stored as NEEDS_MANUAL_REVIEW with the reason in `checks`.
 - Operators publish or reject each verification with `POST /api/v1/operator/regions/{id}/decision`
   (`verification_id`, plus `caption` or `reason`). Publishing reuses the notification engine: one alert per
-  verification, `purpose=emergency`, fan-out to subscribers of the region's province. A REJECTED verification
+  verification, `purpose=emergency`, one message per linked Telegram group. A REJECTED verification
   can only be rejected.
 
 ### Try the agent locally

@@ -34,7 +34,7 @@ def test_deployment_resets_notification_modes_on_every_revision():
                if line.startswith("gcloud run ") and "--update-env-vars=" in line]
     assert len(changes) == 4
     for line in changes:
-        for setting in ("NOTIFICATION_MODE=dry_run", "FCM_ENABLED=false", "TELEGRAM_ENABLED=false"):
+        for setting in ("NOTIFICATION_MODE=dry_run", "TELEGRAM_ENABLED=false"):
             assert setting in line
     assert all("--no-allow-unauthenticated" in line for line in changes if "run deploy" in line)
 
@@ -49,7 +49,7 @@ def test_existing_indexes_are_preserved_with_server_generated_name_field():
         index["fields"].append({"fieldPath": "__name__", "order": "ASCENDING"})
         current.append(index)
     unrelated = copy.deepcopy(current[0])
-    unrelated["name"] = unrelated["name"].replace("notification_inbox", "unrelated_application")
+    unrelated["name"] = unrelated["name"].replace("notification_jobs", "unrelated_application")
     current.append(unrelated)
     calls = []
 
@@ -67,7 +67,6 @@ def test_smoke_check_rejects_public_worker_and_never_prints_token(worker_status,
     service = {"status": {"conditions": [{"type": "Ready", "status": "True"}], "url": "https://test.run.app"},
                "spec": {"template": {"spec": {"containers": [{"env": [
                    {"name": "NOTIFICATION_MODE", "value": "dry_run"},
-                   {"name": "FCM_ENABLED", "value": "false"},
                    {"name": "TELEGRAM_ENABLED", "value": "false"}]}]}}}}
     deployment = SimpleNamespace(apply=True, run=lambda *a, **kw: service)
     responses = [(200, b'{"status":"ok"}'), (401, b""), (worker_status, b"")]

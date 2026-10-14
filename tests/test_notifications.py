@@ -1,3 +1,4 @@
+"""The alert outbox: one job per linked Telegram group, the worker's send, the queue and its recovery."""
 import copy
 import importlib
 from unittest.mock import Mock
@@ -5,137 +6,28 @@ from unittest.mock import Mock
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
-from asapify_api.app import app
-from asapify_api.auth import require_user
-from asapify_api.core import ApiProblem
-from asapify_api.notification_policy import Preferences, group_job, plan_recipient, dispatch_guard
-from asapify_api.notification_delivery import send
-from asapify_api.notification_store import get_notification_store
-from asapify_api.notification_tasks import CloudTasks, require_worker
 from asapify_api import notification_tasks
+from asapify_api.app import app
+from asapify_api.core import ApiProblem
+from asapify_api.notification_delivery import send
+from asapify_api.notification_policy import group_job, key
+from asapify_api.notification_store import NotificationStore, get_notification_store
+from asapify_api.notification_tasks import CloudTasks, require_worker
 
 NOW = '2026-10-08T23:00:00Z'
-PROFILE = {'uid': 'test-user', 'provinces': ['62'], 'consent': True, 'exercises': True,
-           'channels': ['fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh'],
-           'fcm_token': 'test-device-token-123456789'}
-GROUP = {'id': 'g' * 64, 'chat_id': '-1001', 'title': 'ASAPify Notified'}
 SOURCE = 'engine_regions/R-test/verifications/20261008T230000Z'
+GROUP = {'id': 'g' * 64, 'chat_id': '-1001', 'title': 'ASAPify Notified'}
 
 
 def alert(text='EXERCISE', purpose='exercise'):
-    return {'id': 'A-test', 'region_id': 'R-test', 'province': '62', 'text': text, 'purpose': purpose,
-            'published_at': NOW, 'expires_at': '2026-10-09T00:00:00Z', 'status': 'active'}
-
-
-def planned(purpose='exercise'):
-    return plan_recipient(alert('<b>WARNING</b> anomaly indication.', purpose), copy.deepcopy(PROFILE), NOW)
-
-
-def test_emergency_excludes_fcm_and_does_not_delay_sms_whatsapp():
-    inbox, jobs = planned('emergency')
-    assert inbox['purpose'] == 'emergency'
-    assert next(j for j in jobs if j['channel'] == 'web_push')['error'] == 'FCM_EMERGENCY_PROHIBITED'
-    assert all(j['not_before'] == NOW for j in jobs if j['channel'] in ('sms', 'whatsapp'))
-
-
-def test_one_push_transport_and_stable_nonduplicated_job_ids():
-    inbox, jobs = planned()
-    assert [j['channel'] for j in jobs].count('web_push') == 1
-    assert all(j['channel'] != 'fcm' for j in jobs)
-    assert planned() == (inbox, jobs)
-    assert len({j['id'] for j in jobs}) == len(jobs)
-
-
-@pytest.mark.parametrize('change', [{'consent': False}, {'provinces': ['11']}, {'exercises': False}])
-def test_consent_region_and_exercise_opt_out(change):
-    assert plan_recipient(alert(), {**PROFILE, **change}, NOW) == (None, [])
-
-
-def test_future_adapters_blocked_and_escalation_due_time():
-    _, jobs = planned()
-    for j in jobs:
-        if j['channel'] in ('sms', 'whatsapp', 'gmail', 'lora', 'bluetooth_mesh'):
-            assert j['status'] == 'blocked'
-        if j['channel'] in ('sms', 'whatsapp'):
-            assert j['not_before'] == '2026-10-08T23:02:00Z' and j['stage'] == 'escalation'
-
-
-@pytest.mark.parametrize('change,profile,reason', [
-    ({'acknowledged_at': NOW}, {}, 'ACKNOWLEDGED'),
-    ({'status': 'closed'}, {}, 'EXPIRED_OR_CLOSED'),
-    ({}, {'consent': False}, 'CONSENT_REVOKED'),
-    ({}, {'channels': []}, 'CONSENT_REVOKED'),
-    ({}, {'provinces': []}, 'CONSENT_REVOKED'),
-])
-def test_last_moment_guard(change, profile, reason):
-    inbox, jobs = planned()
-    assert dispatch_guard(jobs[0], {**inbox, **change}, {**PROFILE, **profile}, NOW) == reason
-
-
-def test_expired_message_cancelled():
-    inbox, jobs = planned()
-    assert dispatch_guard(jobs[0], inbox, PROFILE, '2026-10-09T00:00:00Z') == 'EXPIRED_OR_CLOSED'
-
-
-@pytest.mark.parametrize('body', [
-    {'consent': True, 'provinces': ['62'], 'telegram_chat_id': 'victim'},
-    {'consent': True, 'provinces': ['62'], 'channels': ['sms', 'sms']},
-    {'consent': True, 'provinces': ['99']},
-])
-def test_preferences_reject_arbitrary_endpoints_or_invalid_choices(body):
-    with pytest.raises(ValidationError): Preferences.model_validate(body)
-
-
-def test_dry_run_never_contacts_provider(monkeypatch):
-    monkeypatch.delenv('NOTIFICATION_MODE', raising=False)
-    monkeypatch.setattr(httpx.Client, 'post', lambda *a, **k: pytest.fail('external call'))
-    inbox, jobs = planned()
-    assert send(jobs[0], inbox, PROFILE)['status'] == 'simulated'
-
-
-def test_emergency_guard_precedes_live_provider(monkeypatch):
-    monkeypatch.setenv('NOTIFICATION_MODE', 'live'); monkeypatch.setenv('FCM_ENABLED', 'true')
-    inbox, jobs = planned('emergency')
-    assert send(next(j for j in jobs if j['channel'] == 'web_push'), inbox, PROFILE)['error'] == 'FCM_EMERGENCY_PROHIBITED'
+    return {'id': 'A-test', 'province': '62', 'text': text, 'purpose': purpose, 'expires_at': '2026-10-09T00:00:00Z'}
 
 
 def live(monkeypatch):
     monkeypatch.setenv('NOTIFICATION_MODE', 'live')
-    monkeypatch.setenv('ASAPIFY_PUBLIC_ORIGIN', 'https://asapify.example')
     monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 'sensitive-token')
     monkeypatch.setenv('TELEGRAM_ENABLED', 'true')
-
-
-def test_timeout_unknown_no_retry_or_secret_leak(monkeypatch):
-    live(monkeypatch)
-    post = Mock(side_effect=httpx.ReadTimeout('sensitive-token'))
-    monkeypatch.setattr(httpx.Client, 'post', post)
-    job = group_job(alert(), GROUP['id'], NOW); result = send(job, job, GROUP)
-    assert result['status'] == 'unknown' and post.call_count == 1
-    assert 'sensitive' not in str(result)
-
-
-def test_telegram_acceptance_is_not_delivery_and_uses_lightweight_text(monkeypatch):
-    live(monkeypatch)
-    post = Mock(return_value=httpx.Response(200, json={'ok': True, 'result': {'message_id': 42}}))
-    monkeypatch.setattr(httpx.Client, 'post', post)
-    job = group_job(alert('<b>WARNING</b> anomaly indication.'), GROUP['id'], NOW)
-    assert send(job, job, GROUP)['status'] == 'accepted'
-    body = post.call_args.kwargs['json']
-    assert body['chat_id'] == '-1001' and body['text'].startswith('[EXERCISE]') and '<b>' not in body['text']
-    assert 'photo' not in body and 'parse_mode' not in body and 'reply_markup' not in body
-
-
-def test_fcm_adapter_for_exercises(monkeypatch):
-    module = importlib.import_module('asapify_api.notification_delivery')
-    live(monkeypatch); monkeypatch.setenv('FCM_ENABLED', 'true')
-    monkeypatch.setattr(module, 'firebase_app', lambda: None)
-    sender = Mock(return_value='projects/test/messages/123'); monkeypatch.setattr(module.messaging, 'send', sender)
-    inbox, jobs = planned()
-    assert send(next(j for j in jobs if j['channel'] == 'web_push'), inbox, PROFILE)['status'] == 'accepted'
-    assert sender.call_args.args[0].android.priority == 'normal'
 
 
 @pytest.fixture(autouse=True)
@@ -145,12 +37,38 @@ def clean_app():
     app.dependency_overrides.clear()
 
 
-def test_inbox_and_worker_require_auth(monkeypatch):
+def test_dry_run_never_contacts_telegram(monkeypatch):
+    monkeypatch.delenv('NOTIFICATION_MODE', raising=False)
+    monkeypatch.setattr(httpx.Client, 'post', lambda *a, **k: pytest.fail('external call'))
+    job = group_job(alert(), GROUP['id'], NOW)
+    assert send(job, GROUP)['status'] == 'simulated'
+
+
+def test_timeout_unknown_no_retry_or_secret_leak(monkeypatch):
+    live(monkeypatch)
+    post = Mock(side_effect=httpx.ReadTimeout('sensitive-token'))
+    monkeypatch.setattr(httpx.Client, 'post', post)
+    result = send(group_job(alert(), GROUP['id'], NOW), GROUP)
+    assert result['status'] == 'unknown' and post.call_count == 1
+    assert 'sensitive' not in str(result)
+
+
+def test_telegram_acceptance_is_plain_text_to_the_group(monkeypatch):
+    live(monkeypatch)
+    post = Mock(return_value=httpx.Response(200, json={'ok': True, 'result': {'message_id': 42}}))
+    monkeypatch.setattr(httpx.Client, 'post', post)
+    assert send(group_job(alert('<b>WARNING</b> anomaly indication.'), GROUP['id'], NOW), GROUP)['status'] == 'accepted'
+    body = post.call_args.kwargs['json']
+    assert body['chat_id'] == '-1001' and body['text'].startswith('[EXERCISE]') and '<b>' not in body['text']
+    assert 'photo' not in body and 'parse_mode' not in body and 'reply_markup' not in body
+
+
+def test_worker_requires_auth(monkeypatch):
     monkeypatch.setenv('NOTIFICATION_WORKER_URL', 'https://worker.run.app')
     monkeypatch.setenv('NOTIFICATION_TASK_CALLER', 'task@test')
     c = TestClient(app, raise_server_exceptions=False)
-    assert c.get('/api/v1/notifications/inbox').status_code == 401
-    assert c.post('/_internal/notifications/dispatch', json={'job_id': 'a'*64}).status_code == 401
+    assert c.post('/_internal/notifications/dispatch', json={'job_id': 'a' * 64}).status_code == 401
+    assert c.get('/api/v1/operator/alerts/x/deliveries').status_code == 401
 
 
 @pytest.mark.parametrize('claims', [
@@ -164,41 +82,27 @@ def test_worker_rejects_wrong_identity(monkeypatch, claims):
     assert e.value.status == 403
 
 
-def test_tasks_stable_name_oidc_without_pii():
+def test_tasks_stable_name_oidc_without_chat_ids():
     task = CloudTasks.__new__(CloudTasks)
     task.parent, task.origin, task.caller = 'projects/test/locations/r/queues/q', 'https://worker.run.app', 'task@test'
     task.session = Mock(); task.session.post.return_value = httpx.Response(409)
-    _, jobs = planned(); task.enqueue(jobs[0]); task.enqueue(jobs[0])
+    job = group_job(alert(), GROUP['id'], NOW); task.enqueue(job); task.enqueue(job)
     first, second = [c.kwargs['json'] for c in task.session.post.call_args_list]
     assert first == second
     assert first['task']['httpRequest']['oidcToken'] == {'serviceAccountEmail': 'task@test', 'audience': task.origin}
-    assert 'test-user' not in str(first) and 'test-device-token' not in str(first)
+    assert '-1001' not in str(first) and 'EXERCISE' not in str(first)
 
 
 def test_duplicate_dispatch_calls_send_once(monkeypatch):
-    routes = importlib.import_module('asapify_api.notification_routes'); inbox, jobs = planned()
-    store = Mock(); store.claim.side_effect = [(jobs[0], inbox, PROFILE), None]
+    routes = importlib.import_module('asapify_api.notification_routes')
+    job = group_job(alert(), GROUP['id'], NOW)
+    store = Mock(); store.claim.side_effect = [(job, GROUP), None]
     sender = Mock(return_value={'status': 'accepted'}); monkeypatch.setattr(routes, 'send', sender)
     app.dependency_overrides[require_worker] = lambda: None
     app.dependency_overrides[get_notification_store] = lambda: store
     c = TestClient(app)
-    for _ in range(2): assert c.post('/_internal/notifications/dispatch', json={'job_id': jobs[0]['id']}).status_code == 200
+    for _ in range(2): assert c.post('/_internal/notifications/dispatch', json={'job_id': job['id']}).status_code == 200
     assert sender.call_count == store.finish.call_count == 1
-
-
-def test_profile_redacts_endpoints():
-    from asapify_api.notification_routes import public_profile
-    result = public_profile(PROFILE)
-    assert 'fcm_token' not in result and 'telegram_chat_id' not in result
-
-
-def test_receiver_inbox_without_operator_role():
-    app.dependency_overrides[require_user] = lambda: {'uid': 'u', 'email': 'u@example.test'}
-    store = Mock(); store.inbox.return_value = []; app.dependency_overrides[get_notification_store] = lambda: store
-    c = TestClient(app)
-    assert c.get('/api/v1/notifications/inbox').status_code == 200
-    store.inbox.assert_called_once_with('u')
-    assert c.get('/api/v1/operator/alerts/x/deliveries').status_code == 401
 
 
 def test_deploy_dry_run_private_worker_and_limited_queue(monkeypatch, capsys):
@@ -212,54 +116,7 @@ def test_deploy_dry_run_private_worker_and_limited_queue(monkeypatch, capsys):
     assert 'roles/owner' not in plan and 'roles/editor' not in plan
 
 
-def test_ack_is_owner_scoped_and_idempotent(monkeypatch):
-    from asapify_api.notification_store import NotificationStore
-    from asapify_api.notification_policy import key
-    from google.cloud import firestore
-    monkeypatch.setattr(firestore, 'transactional', lambda f: f)
-    ref, db, tx = Mock(), Mock(), Mock()
-    db.collection.return_value.document.return_value = ref
-    db.transaction.return_value = tx
-    snapshot = Mock(exists=True)
-    snapshot.to_dict.return_value = {'recipient_id': key('owner'), 'acknowledged_at': '2026-10-08T23:15:00Z'}
-    ref.get.return_value = snapshot
-    store = NotificationStore(db)
-    with pytest.raises(ApiProblem) as exc: store.acknowledge('attacker', 'a'*64)
-    assert exc.value.status == 404 and tx.update.call_count == 0
-    assert store.acknowledge('owner', 'a'*64)['acknowledged_at'] == '2026-10-08T23:15:00Z'
-    assert tx.update.call_count == 0
-
-
-def test_telegram_is_not_a_subscriber_channel_even_in_an_older_profile():
-    _, jobs = plan_recipient(alert(), {**PROFILE, 'channels': ['telegram', 'web_push'], 'telegram_chat_id': '123'}, NOW)
-    assert [j['channel'] for j in jobs] == ['web_push']
-    with pytest.raises(ValidationError):
-        Preferences(provinces=['62'], channels=['telegram'], consent=True)
-
-
-def test_claim_transaction_cancels_after_ack_and_reserves_once(monkeypatch):
-    from asapify_api.notification_store import NotificationStore
-    from google.cloud import firestore
-    from datetime import timedelta
-    from asapify_api.core import iso, utc_now
-    monkeypatch.setattr(firestore, 'transactional', lambda f: f)
-    inbox, jobs = planned()
-    job = {**jobs[0], 'expires_at': iso(utc_now() + timedelta(hours=1)), 'not_before': iso(utc_now()-timedelta(seconds=1))}
-    values = {'notification_jobs': job, 'notification_inbox': inbox, 'notification_recipients': PROFILE}
-    db, tx = Mock(), Mock()
-    def collection(name):
-        doc = Mock(); doc.get.side_effect = lambda **kw: Mock(exists=True, to_dict=lambda: copy.deepcopy(values[name]))
-        doc.kind = name
-        c = Mock(); c.document.return_value = doc; return c
-    db.collection.side_effect = collection; db.transaction.return_value = tx
-    tx.update.side_effect = lambda ref, fields: values[ref.kind].update(fields)
-    store = NotificationStore(db)
-    assert store.claim(job['id']) is not None
-    assert store.claim(job['id']) is None
-    job['status'] = 'pending'; inbox['acknowledged_at'] = NOW
-    assert store.claim(job['id']) is None
-    assert job['status'] == 'cancelled' and job['error'] == 'ACKNOWLEDGED'
-
+# ---------- an in-memory Firestore, just what the store uses ----------
 
 class FakeSnap:
     def __init__(self, ref, data):
@@ -283,39 +140,36 @@ class FakeRef:
     def set(self, data):
         self.db.docs[self.path] = copy.deepcopy(data)
 
+    def update(self, fields):
+        self.db.docs[self.path].update(copy.deepcopy(fields))
+
     def delete(self):
         self.db.docs.pop(self.path, None)
 
 
 class FakeQuery:
-    """Only what fan-out uses: where (== / array_contains), order by id, limit, start_after, stream."""
-    def __init__(self, db, kind, filters=(), size=None, after=None):
-        self.db, self.kind, self.filters, self.size, self.after = db, kind, filters, size, after
+    """Only what the store uses: where (==), order by, limit, stream."""
+    def __init__(self, db, kind, filters=(), size=None):
+        self.db, self.kind, self.filters, self.size = db, kind, filters, size
 
     def document(self, doc_id):
         return FakeRef(self.db, self.kind, doc_id)
 
     def where(self, filter):
-        return FakeQuery(self.db, self.kind, self.filters + (filter,), self.size, self.after)
+        return FakeQuery(self.db, self.kind, self.filters + (filter,), self.size)
 
     def order_by(self, field):
         return self
 
     def limit(self, size):
-        return FakeQuery(self.db, self.kind, self.filters, size, self.after)
-
-    def start_after(self, snapshot):
-        return FakeQuery(self.db, self.kind, self.filters, self.size, snapshot.id)
+        return FakeQuery(self.db, self.kind, self.filters, size)
 
     def stream(self):
         prefix = self.kind + '/'
         rows = sorted((p[len(prefix):], d) for p, d in self.db.docs.items() if p.startswith(prefix))
         for f in self.filters:
-            match = (lambda d, f=f: f.value in d.get(f.field_path, [])) if f.op_string == 'array_contains' \
-                else (lambda d, f=f: d.get(f.field_path) == f.value)
-            rows = [(i, d) for i, d in rows if match(d)]
-        rows = [(i, d) for i, d in rows if self.after is None or i > self.after][:self.size]
-        return [FakeSnap(self.document(i), d) for i, d in rows]
+            rows = [(i, d) for i, d in rows if d.get(f.field_path) == f.value]
+        return [FakeSnap(self.document(i), d) for i, d in rows[:self.size]]
 
 
 class FakeBatch:
@@ -352,6 +206,20 @@ class FakeBatch:
                 target[parts[-1]] = value
 
 
+class Tx:
+    def __init__(self, db):
+        self.db = db
+
+    def set(self, ref, data):
+        self.db.docs[ref.path] = dict(data)
+
+    def delete(self, ref):
+        self.db.docs.pop(ref.path, None)
+
+    def update(self, ref, fields):
+        self.db.docs[ref.path].update(fields)
+
+
 class FakeDB:
     def __init__(self):
         self.docs, self.stale_reads = {}, 0
@@ -372,19 +240,21 @@ class FakeDB:
     def batch(self):
         return FakeBatch(self)
 
+    def transaction(self):
+        return Tx(self)
 
-def fanout_db(subscribers):
+
+def fanout_db(groups):
+    """One published alert and `groups` linked Telegram groups."""
     db = FakeDB()
     db.docs['alerts/A-test'] = {'id': 'A-test', 'region_id': 'R-test', 'source_path': SOURCE, 'province': '62',
-                                'caption': '<b>WARNING</b>',
-                                'purpose': 'emergency', 'published_at': NOW, 'expires_at': '2026-10-09T00:00:00Z',
-                                'status': 'active', 'fanout': 'pending'}
+                                'caption': '<b>WARNING</b>', 'purpose': 'emergency', 'published_at': NOW,
+                                'expires_at': '2026-10-09T00:00:00Z', 'status': 'active', 'fanout': 'pending'}
     db.docs[SOURCE] = {'id': '20261008T230000Z', 'decision': {'action': 'publish', 'notifications': {'state': 'fanout_pending'}}}
-    subscriber = {'provinces': ['62'], 'consent': True, 'channels': ['web_push']}
-    for i in range(subscribers):
-        db.docs[f'notification_recipients/r{i:03}'] = {**subscriber, 'uid': f'u{i}'}
-    db.docs['notification_recipients/z-other'] = {**subscriber, 'uid': 'other', 'provinces': ['11']}
-    db.docs['notification_recipients/z-off'] = {**subscriber, 'uid': 'off', 'consent': False}
+    for i in range(groups):
+        gid = key(f'-100{i}')
+        db.docs[f'telegram_groups/{gid}'] = {'id': gid, 'chat_id': f'-100{i}', 'title': f'Group {i}', 'invite_url': None,
+                                             'linked_by': 'op@example.test', 'linked_at': NOW}
     return db
 
 
@@ -392,19 +262,18 @@ def count(db, kind):
     return sum(p.startswith(kind + '/') for p in db.docs)
 
 
-def test_fanout_has_no_subscriber_cap_and_reaches_everyone_in_pages():
-    from asapify_api.notification_store import NotificationStore
-    db = fanout_db(120)
+def test_fanout_queues_one_job_per_group_and_records_the_summary():
+    db = fanout_db(3)
     summary = NotificationStore(db).fan_out('A-test')
-    assert summary == {'state': 'outbox_saved', 'recipients': 120, 'groups': 0, 'jobs': 120}
-    assert count(db, 'notification_inbox') == 120 and count(db, 'notification_jobs') == 120
-    assert db.docs['alerts/A-test']['fanout'] == 'done'
+    assert summary == {'state': 'outbox_saved', 'groups': 3, 'jobs': 3}
+    assert count(db, 'notification_jobs') == 3 and db.docs['alerts/A-test']['fanout'] == 'done'
     assert db.docs[SOURCE]['decision']['notifications'] == summary
+    job = next(v for k, v in db.docs.items() if k.startswith('notification_jobs/'))
+    assert job['channel'] == 'telegram_group' and job['text'] == '<b>WARNING</b>' and job['not_before'] == NOW
 
 
 def test_resumed_fanout_skips_existing_and_never_resets_a_claimed_job():
-    from asapify_api.notification_store import NotificationStore
-    db = fanout_db(60)
+    db = fanout_db(2)
     store = NotificationStore(db)
     store.fan_out('A-test')
     claimed = next(p for p in db.docs if p.startswith('notification_jobs/'))
@@ -412,19 +281,47 @@ def test_resumed_fanout_skips_existing_and_never_resets_a_claimed_job():
     db.docs['alerts/A-test']['fanout'] = 'pending'  # e.g. the API died before marking it done
     assert store.resume_fanouts() == 1
     assert db.docs[claimed]['status'] == 'sending'
-    assert count(db, 'notification_jobs') == 60 and db.docs['alerts/A-test']['fanout'] == 'done'
+    assert count(db, 'notification_jobs') == 2 and db.docs['alerts/A-test']['fanout'] == 'done'
 
 
 def test_concurrent_fanout_conflict_is_retried_without_duplicates():
-    from asapify_api.notification_store import NotificationStore
     db = fanout_db(3)
     store = NotificationStore(db)
     store.fan_out('A-test')
     db.stale_reads = 1  # first read misses documents another run already created
-    assert store.fan_out('A-test')['recipients'] == 3
-    assert count(db, 'notification_inbox') == 3
+    assert store.fan_out('A-test')['groups'] == 3
+    assert count(db, 'notification_jobs') == 3
 
 
-def test_no_subscribers_is_reported_not_failed():
-    from asapify_api.notification_store import NotificationStore
-    assert NotificationStore(fanout_db(0)).fan_out('A-test') == {'state': 'no_recipients', 'recipients': 0, 'groups': 0, 'jobs': 0}
+def test_no_group_is_reported_not_failed():
+    assert NotificationStore(fanout_db(0)).fan_out('A-test') == {'state': 'no_groups', 'groups': 0, 'jobs': 0}
+
+
+@pytest.fixture
+def tx_identity(monkeypatch):
+    from google.cloud import firestore
+    monkeypatch.setattr(firestore, 'transactional', lambda f: f)
+
+
+def test_claim_reserves_once_and_cancels_a_closed_alert(tx_identity, monkeypatch):
+    from asapify_api import notification_store
+    monkeypatch.setattr(notification_store, 'utc_now', lambda: notification_store.as_time('2026-10-08T23:05:00Z'))
+    db = fanout_db(1)
+    store = NotificationStore(db)
+    store.fan_out('A-test')
+    path, job = next((k, v) for k, v in db.docs.items() if k.startswith('notification_jobs/'))
+    claimed_job, group = store.claim(job['id'])
+    assert group['chat_id'] == '-1000' and db.docs[path]['status'] == 'sending'
+    assert store.claim(job['id']) is None   # already sending
+    db.docs[path]['status'] = 'pending'
+    db.docs['alerts/A-test']['status'] = 'closed'
+    assert store.claim(job['id']) is None
+    assert db.docs[path]['status'] == 'cancelled' and db.docs[path]['error'] == 'EXPIRED_OR_CLOSED'
+
+
+def test_delivery_status_names_the_group_not_its_chat(tx_identity):
+    db = fanout_db(1)
+    store = NotificationStore(db)
+    store.fan_out('A-test')
+    rows = store.delivery_status('A-test')
+    assert [r['group'] for r in rows] == ['Group 0'] and '-1000' not in str(rows)

@@ -5,10 +5,10 @@ Shipping this API does not mean the satellite detection system is operational.
 
 ## Notification Engine v1 — 9 October 2026
 
-Implements the multi-channel decision: inbox + regional consent, alerts in a Telegram group, simulated/non-emergency push,
-Cloud Tasks with OIDC, a Firestore outbox, acknowledgement and recovery. Default mode is `dry_run`.
-See [implementation and activation details](docs/NOTIFICATIONS.md). WhatsApp, SMS, Gmail, LoRa and Bluetooth
-are later stages and are never reported as delivered. Google Chat is not used.
+Alerts go to the team's Telegram group: the ASAPify bot posts every alert an operator publishes there, and anyone
+who wants the information joins the group from the app's public join page. A Firestore outbox, Cloud Tasks with OIDC
+and a recovery sweep carry each message; the default mode is `dry_run`. See [NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
+There are no personal subscriptions, inboxes or push messages.
 
 ## Integration status, 13 October 2026
 
@@ -23,7 +23,7 @@ are later stages and are never reported as delivered. Google Chat is not used.
 | Himawari/GK2A decoding | In the engine (`asapify_engine/satellites.py`, satpy), checked against VIIRS on one night slot; the older `pipeline/` code was removed on 15 Oct and stays in git history ([ENGINE.md](docs/ENGINE.md) maps one to the other) |
 | ADK/Gemini agent | `geospatial_analyst` on Vertex AI with `fetch_firms_data` (NASA FIRMS): automatic on entering ALERT and the Re-verify button, YAML checked before it is stored, hard daily quota |
 | Alert list/close | Not implemented; endpoints return 503 and are not used by the UI yet |
-| Cloud tests with real Firebase/Firestore/Telegram | Google sign-in, preferences and inbox proven live; 401/403 and the private worker verified. Publish, Telegram and the operator flow not tested yet (no data, bot not installed) |
+| Cloud tests with real Firebase/Firestore/Telegram | Google sign-in proven live; 401/403 and the private worker verified. Publish, Telegram and the operator flow not tested yet (no data, bot not installed) |
 
 The engine covers **Sumatra + Kalimantan**: 65 peat regions, one 10-minute slot each, grouped by WIB day.
 

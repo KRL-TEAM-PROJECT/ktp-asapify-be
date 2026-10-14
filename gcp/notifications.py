@@ -15,16 +15,14 @@ class NotificationsDeploy(Deploy):
 
     def bootstrap_notifications(self):
         self.preflight()
-        self.run('services', 'enable', 'cloudtasks.googleapis.com', 'cloudscheduler.googleapis.com',
-                 'fcm.googleapis.com')
+        self.run('services', 'enable', 'cloudtasks.googleapis.com', 'cloudscheduler.googleapis.com')
         accounts = self.run('iam', 'service-accounts', 'list', read=True)
         existing = {a['email'] for a in accounts or []}
         for name, email in [('asapify-notify', self.worker), ('asapify-task', self.caller)]:
             if email not in existing:
                 self.run('iam', 'service-accounts', 'create', name)
-        for role in ('roles/datastore.user', 'roles/firebasecloudmessaging.admin'):
-            self.run('projects', 'add-iam-policy-binding', self.project,
-                     f'--member=serviceAccount:{self.worker}', f'--role={role}', '--condition=None')
+        self.run('projects', 'add-iam-policy-binding', self.project,
+                 f'--member=serviceAccount:{self.worker}', '--role=roles/datastore.user', '--condition=None')
         for account in (self.api, self.worker):
             self.run('projects', 'add-iam-policy-binding', self.project,
                      f'--member=serviceAccount:{account}', '--role=roles/cloudtasks.enqueuer', '--condition=None')
@@ -42,7 +40,7 @@ class NotificationsDeploy(Deploy):
         if origin.scheme != 'https' or not origin.netloc or origin.username or origin.password or origin.path not in ('', '/') or origin.query or origin.fragment:
             raise ValueError('Public origin must be an HTTPS origin without path/query/credentials.')
         env = ','.join([f'GOOGLE_CLOUD_PROJECT={self.project}', 'FIRESTORE_DATABASE=asapify',
-                        'NOTIFICATION_MODE=dry_run', 'FCM_ENABLED=false', 'TELEGRAM_ENABLED=false',
+                        'NOTIFICATION_MODE=dry_run', 'TELEGRAM_ENABLED=false',
                         f'ASAPIFY_VERSION={version}', f'ASAPIFY_PUBLIC_ORIGIN={public_origin.rstrip("/")}',
                         f'NOTIFICATION_TASK_CALLER={self.caller}'])
         self.run('run', 'deploy', 'asapify-notify', f'--image={self.image(version)}', f'--region={self.region}',
