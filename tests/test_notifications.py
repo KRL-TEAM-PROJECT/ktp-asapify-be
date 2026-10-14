@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from asapify_api.app import app
 from asapify_api.auth import require_user
 from asapify_api.core import ApiProblem
-from asapify_api.notification_policy import Preferences, plan_recipient, dispatch_guard
+from asapify_api.notification_policy import Preferences, group_job, plan_recipient, dispatch_guard
 from asapify_api.notification_delivery import send
 from asapify_api.notification_store import get_notification_store
 from asapify_api.notification_tasks import CloudTasks, require_worker
@@ -18,8 +18,9 @@ from asapify_api import notification_tasks
 
 NOW = '2026-10-08T23:00:00Z'
 PROFILE = {'uid': 'test-user', 'provinces': ['62'], 'consent': True, 'exercises': True,
-           'channels': ['telegram', 'fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh'],
-           'telegram_chat_id': '123', 'fcm_token': 'test-device-token-123456789'}
+           'channels': ['fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh'],
+           'fcm_token': 'test-device-token-123456789'}
+GROUP = {'id': 'g' * 64, 'chat_id': '-1001', 'title': 'ASAPify Notified'}
 SOURCE = 'engine_regions/R-test/verifications/20261008T230000Z'
 
 
@@ -37,7 +38,6 @@ def test_emergency_excludes_fcm_and_does_not_delay_sms_whatsapp():
     assert inbox['purpose'] == 'emergency'
     assert next(j for j in jobs if j['channel'] == 'web_push')['error'] == 'FCM_EMERGENCY_PROHIBITED'
     assert all(j['not_before'] == NOW for j in jobs if j['channel'] in ('sms', 'whatsapp'))
-    assert next(j for j in jobs if j['channel'] == 'telegram')['status'] == 'pending'
 
 
 def test_one_push_transport_and_stable_nonduplicated_job_ids():
@@ -112,7 +112,7 @@ def test_timeout_unknown_no_retry_or_secret_leak(monkeypatch):
     live(monkeypatch)
     post = Mock(side_effect=httpx.ReadTimeout('sensitive-token'))
     monkeypatch.setattr(httpx.Client, 'post', post)
-    inbox, jobs = planned(); result = send(jobs[0], inbox, PROFILE)
+    job = group_job(alert(), GROUP['id'], NOW); result = send(job, job, GROUP)
     assert result['status'] == 'unknown' and post.call_count == 1
     assert 'sensitive' not in str(result)
 
@@ -121,11 +121,11 @@ def test_telegram_acceptance_is_not_delivery_and_uses_lightweight_text(monkeypat
     live(monkeypatch)
     post = Mock(return_value=httpx.Response(200, json={'ok': True, 'result': {'message_id': 42}}))
     monkeypatch.setattr(httpx.Client, 'post', post)
-    inbox, jobs = planned()
-    assert send(jobs[0], inbox, PROFILE)['status'] == 'accepted'
+    job = group_job(alert('<b>WARNING</b> anomaly indication.'), GROUP['id'], NOW)
+    assert send(job, job, GROUP)['status'] == 'accepted'
     body = post.call_args.kwargs['json']
-    assert body['text'].startswith('[EXERCISE]') and '<b>' not in body['text']
-    assert 'photo' not in body and 'parse_mode' not in body and inbox['acknowledged_at'] is None
+    assert body['chat_id'] == '-1001' and body['text'].startswith('[EXERCISE]') and '<b>' not in body['text']
+    assert 'photo' not in body and 'parse_mode' not in body and 'reply_markup' not in body
 
 
 def test_fcm_adapter_for_exercises(monkeypatch):
@@ -230,10 +230,11 @@ def test_ack_is_owner_scoped_and_idempotent(monkeypatch):
     assert tx.update.call_count == 0
 
 
-def test_unlinked_telegram_does_not_turn_into_arbitrary_target():
-    profile = {**PROFILE, 'telegram_chat_id': None}
-    _, jobs = plan_recipient(alert(), profile, NOW)
-    assert next(j for j in jobs if j['channel'] == 'telegram')['error'] == 'TELEGRAM_NOT_LINKED'
+def test_telegram_is_not_a_subscriber_channel_even_in_an_older_profile():
+    _, jobs = plan_recipient(alert(), {**PROFILE, 'channels': ['telegram', 'web_push'], 'telegram_chat_id': '123'}, NOW)
+    assert [j['channel'] for j in jobs] == ['web_push']
+    with pytest.raises(ValidationError):
+        Preferences(provinces=['62'], channels=['telegram'], consent=True)
 
 
 def test_claim_transaction_cancels_after_ack_and_reserves_once(monkeypatch):
@@ -279,6 +280,12 @@ class FakeRef:
     def get(self, **kw):
         return FakeSnap(self, self.db.docs.get(self.path))
 
+    def set(self, data):
+        self.db.docs[self.path] = copy.deepcopy(data)
+
+    def delete(self):
+        self.db.docs.pop(self.path, None)
+
 
 class FakeQuery:
     """Only what fan-out uses: where (== / array_contains), order by id, limit, start_after, stream."""
@@ -321,13 +328,22 @@ class FakeBatch:
     def update(self, ref, fields):
         self.ops.append(('update', ref, fields))
 
+    def set(self, ref, data):
+        self.ops.append(('set', ref, data))
+
+    def delete(self, ref):
+        self.ops.append(('delete', ref, None))
+
     def commit(self):
         from google.api_core.exceptions import AlreadyExists
         if any(op == 'create' and ref.path in self.db.docs for op, ref, _ in self.ops):
             raise AlreadyExists('document exists')
         for op, ref, data in self.ops:
-            if op == 'create':
+            if op in ('create', 'set'):
                 self.db.docs[ref.path] = copy.deepcopy(data)
+                continue
+            if op == 'delete':
+                self.db.docs.pop(ref.path, None)
                 continue
             for field, value in data.items():
                 target, *parts = self.db.docs[ref.path], *field.split('.')
@@ -364,9 +380,9 @@ def fanout_db(subscribers):
                                 'purpose': 'emergency', 'published_at': NOW, 'expires_at': '2026-10-09T00:00:00Z',
                                 'status': 'active', 'fanout': 'pending'}
     db.docs[SOURCE] = {'id': '20261008T230000Z', 'decision': {'action': 'publish', 'notifications': {'state': 'fanout_pending'}}}
-    subscriber = {'provinces': ['62'], 'consent': True, 'channels': ['telegram']}
+    subscriber = {'provinces': ['62'], 'consent': True, 'channels': ['web_push']}
     for i in range(subscribers):
-        db.docs[f'notification_recipients/r{i:03}'] = {**subscriber, 'uid': f'u{i}', 'telegram_chat_id': str(i)}
+        db.docs[f'notification_recipients/r{i:03}'] = {**subscriber, 'uid': f'u{i}'}
     db.docs['notification_recipients/z-other'] = {**subscriber, 'uid': 'other', 'provinces': ['11']}
     db.docs['notification_recipients/z-off'] = {**subscriber, 'uid': 'off', 'consent': False}
     return db
@@ -380,7 +396,7 @@ def test_fanout_has_no_subscriber_cap_and_reaches_everyone_in_pages():
     from asapify_api.notification_store import NotificationStore
     db = fanout_db(120)
     summary = NotificationStore(db).fan_out('A-test')
-    assert summary == {'state': 'outbox_saved', 'recipients': 120, 'jobs': 120}
+    assert summary == {'state': 'outbox_saved', 'recipients': 120, 'groups': 0, 'jobs': 120}
     assert count(db, 'notification_inbox') == 120 and count(db, 'notification_jobs') == 120
     assert db.docs['alerts/A-test']['fanout'] == 'done'
     assert db.docs[SOURCE]['decision']['notifications'] == summary
@@ -411,4 +427,4 @@ def test_concurrent_fanout_conflict_is_retried_without_duplicates():
 
 def test_no_subscribers_is_reported_not_failed():
     from asapify_api.notification_store import NotificationStore
-    assert NotificationStore(fanout_db(0)).fan_out('A-test') == {'state': 'no_recipients', 'recipients': 0, 'jobs': 0}
+    assert NotificationStore(fanout_db(0)).fan_out('A-test') == {'state': 'no_recipients', 'recipients': 0, 'groups': 0, 'jobs': 0}

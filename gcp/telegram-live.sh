@@ -2,7 +2,7 @@
 # Switch Telegram delivery to live (docs/NOTIFICATIONS.md). Without APPLY=1 it only prints the plan.
 # The bot token is read with a hidden prompt and goes straight into Secret Manager and a curl config on stdin:
 # it never appears on a command line, in the output or in a log.
-# Before: create the bot with @BotFather and agree on demo recipients. Messages are real after this.
+# Before: create the bot with @BotFather and the Telegram group the alerts go to. Messages are real after this.
 # Undo: gcloud run services update <service> --update-env-vars NOTIFICATION_MODE=dry_run,TELEGRAM_ENABLED=false
 set -euo pipefail
 P=${ASAPIFY_PROJECT_ID:-hack2skill-510921}
@@ -62,4 +62,4 @@ curl -sS -K - <<CFG | head -c 400; echo
 url = "https://api.telegram.org/bot$TOKEN/getWebhookInfo"
 CFG
 unset TOKEN HOOK
-echo "Telegram is live. Link a demo account from /notifications, then publish one verified region."
+echo "Telegram is live. On the Regions page open Telegram groups, add the bot to your group, then publish one verified region."

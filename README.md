@@ -5,7 +5,7 @@ Shipping this API does not mean the satellite detection system is operational.
 
 ## Notification Engine v1 — 9 October 2026
 
-Implements the multi-channel decision: inbox + regional consent, Telegram text, simulated/non-emergency push,
+Implements the multi-channel decision: inbox + regional consent, alerts in a Telegram group, simulated/non-emergency push,
 Cloud Tasks with OIDC, a Firestore outbox, acknowledgement and recovery. Default mode is `dry_run`.
 See [implementation and activation details](docs/NOTIFICATIONS.md). WhatsApp, SMS, Gmail, LoRa and Bluetooth
 are later stages and are never reported as delivered. Google Chat is not used.
@@ -17,7 +17,7 @@ are later stages and are never reported as delivered. Google Chat is not used.
 | FastAPI `/api/v1`: health, regions, day archive, agent, decisions, operator access, notifications | Implemented; reads the engine's Firestore documents. The pixel grid / night / cluster API was removed on 15 Oct |
 | Authentication | Firebase ID token, verified email, custom claim `role=operator`; revocation checked |
 | Operator decision | Firestore transaction: decision, alert reservation, audit; a second decision is refused |
-| Telegram | Text adapter in the Notification Engine; DM linking, `dry_run` by default, accepted/unknown status |
+| Telegram | The bot posts every published alert in the team's Telegram group(s); an operator links a group from the Regions page. No personal chats. `dry_run` until `gcp/telegram-live.sh` |
 | Cloud Run + GCS + Firestore + Artifact Registry | Live in `hack2skill-510921` since 9 Oct. Every merge to `main` that touches the API is tested and deployed by GitHub Actions (see [CLOUDSHELL.md](docs/CLOUDSHELL.md)). Firestore rules released 13 Oct (no direct browser access) |
 | Risk engine | 65 peat regions, Himawari-9 + GK2A every 10 minutes (the two satellites confirm each other; ALERT only at night with both agreeing), VIIRS + NASA POWER as support, Fuzzy MAUT, state machine, audit record per slot, hot pixels and nearby VIIRS per region, a day archive for the map's date picker. See [ENGINE.md](docs/ENGINE.md) |
 | Himawari/GK2A decoding | In the engine (`asapify_engine/satellites.py`, satpy), checked against VIIRS on one night slot; the older `pipeline/` code was removed on 15 Oct and stays in git history ([ENGINE.md](docs/ENGINE.md) maps one to the other) |

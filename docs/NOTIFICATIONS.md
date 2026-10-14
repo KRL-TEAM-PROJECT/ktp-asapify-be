@@ -3,8 +3,13 @@
 Implements the decision from the 9 October 2026 chat:
 https://chatgpt.com/s/t_6ac82245a3988191a78613a3f6fc0751
 
-Goals: several channel choices, consent per region, short messages, receipt confirmation,
-a recoverable queue, and a delivery trail. Google Chat is not used.
+Goals: alerts in one Telegram group that anyone who wants the information can join, an in-app inbox per region
+with receipt confirmation, short messages, a recoverable queue and a delivery trail. Google Chat is not used.
+
+**Telegram works through a group, not one chat per person (team decision, 15 October 2026).** The team creates a
+Telegram group (for example "ASAPify Notified"), an operator adds the ASAPify bot to it from the app, and from then
+on the bot posts every alert an operator publishes in that group. People who want to know about fires join the
+group and read it; nobody links a personal chat. The bot only posts alerts: it does not answer questions.
 Status: deployed to `hack2skill-510921` in `dry_run`; **no message has reached a real recipient yet**.
 
 ## Scope of this stage
@@ -13,8 +18,8 @@ Status: deployed to `hack2skill-510921` in `dry_run`; **no message has reached a
 |---|---|
 | Cloud Run API, private worker, Firestore | API code, publish and outbox transactions, setup scripts |
 | Cloud Tasks, Cloud Scheduler | OIDC HTTP tasks, deterministic names, outbox recovery every minute |
-| Inbox | Subscriber Firebase sign-in; regions, consent, 50 latest messages, idempotent confirmation |
-| Telegram | DM linking with a one-time code; webhook secret; lightweight text `sendMessage` |
+| Inbox | Signed-in subscribers choose regions; 50 latest messages, idempotent receipt confirmation |
+| Telegram | Bot in the team's alert group(s), linked by an operator with a one-time code; webhook secret; text `sendMessage` |
 | FCM and Web Push | One FCM transport; one device per account; exercise/non-emergency only |
 | WhatsApp, SMS, Gmail | Stored choice and routing contract; adapters **not implemented** |
 | LoRa / LoRaWAN, Bluetooth Mesh | Choice/design only; no driver, gateway or device yet |
@@ -35,13 +40,13 @@ recipients must opt in to exercises. Never change replay to disguise a real warn
 
 1. The operator chooses Publish after verification. One Firestore transaction saves the decision, the audit entry
    and the alert (`fanout: pending`). After the commit, the API writes inbox entries and channel jobs for consenting
-   subscribers, page by page. Ids are deterministic and writes are `create`-only, so a retry or a concurrent run never
+   subscribers, page by page, plus one job per linked Telegram group. Ids are deterministic and writes are `create`-only, so a retry or a concurrent run never
    duplicates a message or resets an already claimed job. No provider is called inside the transaction.
 2. The API tries to enqueue. A failed fan-out or enqueue never loses the decision; the response says
    `queue.awaiting_recovery`. The Scheduler resumes `fanout: pending` alerts, scans the `pending` outbox and retries.
    Task names use a hash and a generation.
 3. Cloud Tasks calls the private worker with OIDC as the expected service account. The task name header alone
-   grants nothing. UIDs, chat ids and device tokens never go into a task.
+   grants nothing. UIDs, group chat ids and device tokens never go into a task.
 4. A worker transaction claims one job and re-checks current consent, region, expiry and acknowledgement.
    A repeated or concurrent request that sees `sending` or a terminal result never sends again.
 5. A provider response means `accepted`, not `delivered`/`read`. The Confirm receipt button sets
@@ -105,20 +110,31 @@ The bundled rules deny every direct browser access to Firestore; the server uses
 replace another application's database rules.** This configuration targets the dedicated `asapify` database.
 Wait for the indexes to be READY before testing publish/inbox. Every configuration field is listed in `.env.example`.
 
-### Telegram
+### Telegram group
 
-- Create a demo bot; store its token as the secret `telegram-bot-token`, readable by the worker only.
-- Create a random webhook secret `telegram-webhook-secret`, readable by the API only.
-- Point the bot webhook at `https://<API_OR_HOSTING>/api/v1/notifications/telegram-webhook`
-  with the same `secret_token` and `allowed_updates=["message"]` through the official Telegram API.
-- Set `TELEGRAM_BOT_USERNAME` on the API. The UI creates a one-time /start deep link valid for 10 minutes.
-- The subscriber signs in, picks regions and Telegram, consents, opens the bot and presses Start.
-  Linking only accepts private chats from the webhook; a browser cannot set someone else's chat as a target.
-- For a live demo, set `TELEGRAM_ENABLED=true` and `NOTIFICATION_MODE=live` on the API and the worker,
-  after the worker has the token secret. Photos are optional, so messages never wait for an image upload.
-- Provincial Telegram groups from the old design are not enabled. This stage uses one DM per recipient
-  so consent and acknowledgement can be attributed correctly. Group targets need admin registration
-  and separate group consent; not implemented.
+Setup, once:
+
+1. Create the bot with @BotFather (`/newbot`). Keep the token out of chats and tickets.
+2. Create the Telegram group the alerts go to, and invite the people who want them.
+3. Run `gcp/telegram-live.sh` (plan first, then `APPLY=1`). It stores the token as the secret
+   `telegram-bot-token` (worker only) and a random `telegram-webhook-secret` (API only), sets
+   `TELEGRAM_BOT_USERNAME`, `TELEGRAM_ENABLED=true` and `NOTIFICATION_MODE=live` on both services, and points the
+   bot's webhook at `/api/v1/notifications/telegram-webhook` with that secret (`allowed_updates=["message"]`).
+4. An operator opens the Regions page → Telegram groups → "Add the bot to a group". The app gets a one-time
+   `t.me/<bot>?startgroup=<code>` link (10 minutes, stored hashed, used once). Telegram asks which group, adds the
+   bot and posts `/start@<bot> <code>` there; the webhook links that group. The group's title then shows in the
+   panel. The bot's privacy mode can stay on: Telegram delivers that command to the bot either way.
+
+How it behaves:
+
+- Every alert an operator publishes becomes one `telegram_group` job per linked group, in the same outbox as the
+  subscriber jobs, sent by the worker as plain text (no photo, no HTML). The `dry_run` / `live` switch applies.
+- The job is cancelled if the group was unlinked or the alert closed or expired before it was sent.
+- A group has no inbox and no receipt button; the app's inbox stays the place to confirm receipt.
+- Only groups are linked, and only with an operator's code: adding the bot to another group, or writing to it
+  privately, links nothing. The chat id stays on the server; operators see the title and can unlink it.
+- When Telegram turns the group into a supergroup, the link follows the new chat id.
+- The bot only posts alerts. It answers no questions and reads no other messages.
 
 ### Browser push / FCM
 
@@ -135,7 +151,7 @@ Set `FCM_ENABLED=true` on the API and worker only for exercise/non-emergency tes
 - Two identical Cloud Tasks jobs: one claim; stop the worker after a claim to check `unknown`.
 - Withdraw consent/acknowledge before a job is due and confirm the cancellation; test expiry and fan-out
   above 50 subscribers (more than one page), including the API dying mid fan-out and the sweep resuming it.
-- Telegram to a verified demo account and exercise push to a browser that allows it. Record
+- An alert in the Telegram group and exercise push to a browser that allows it. Record
   published_at, started_at, finished_at, acknowledged_at; never report accepted as phone latency.
 - Test phones in the target areas; SMS/WhatsApp cannot be compared before an adapter/provider exists.
 
@@ -146,8 +162,10 @@ Set `FCM_ENABLED=true` on the API and worker only for exercise/non-emergency tes
 | GET `/api/v1/notifications/settings` | Subscriber; preferences without tokens or secret chat addresses |
 | PUT `/api/v1/notifications/preferences` | Subscriber; provinces, channels, consent, exercises |
 | POST / DELETE `/api/v1/notifications/device` | Subscriber; register / remove one push device |
-| POST `/api/v1/notifications/telegram-link` | Subscriber; one-time deep link code |
-| POST `/api/v1/notifications/telegram-webhook` | Webhook secret; binding only, never replies |
+| POST `/api/v1/notifications/telegram-webhook` | Webhook secret; links a group with an operator's code, never replies |
+| GET `/api/v1/operator/telegram-groups` | Operator; linked groups by title |
+| POST `/api/v1/operator/telegram-groups/link` | Operator; one-time `startgroup` link, 10 minutes |
+| DELETE `/api/v1/operator/telegram-groups/{id}` | Operator; stop alerts to a group |
 | GET `/api/v1/notifications/inbox` | The account's 50 latest messages |
 | POST `/api/v1/notifications/inbox/{id}/ack` | Idempotent acknowledgement; another account's id -> 404 |
 | GET `/api/v1/operator/alerts/{id}/deliveries` | Operator; status, error, timestamps, acknowledgement |

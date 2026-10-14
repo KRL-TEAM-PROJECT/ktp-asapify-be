@@ -108,7 +108,7 @@ def test_region_alert_fan_out_reaches_subscribers_and_updates_the_verification()
     db.docs["alerts/A-test"].update({"region_id": REGION.id, "source_path": source})
     db.docs[source] = {"id": "20261013T060000Z", "decision": {"action": "publish", "notifications": {}}}
     summary = NotificationStore(db).fan_out("A-test")
-    assert summary == {"state": "outbox_saved", "recipients": 4, "jobs": 4}
+    assert summary == {"state": "outbox_saved", "recipients": 4, "groups": 0, "jobs": 4}
     assert db.docs[source]["decision"]["notifications"] == summary and count(db, "notification_inbox") == 4
     inbox = next(v for k, v in db.docs.items() if k.startswith("notification_inbox/"))
     assert inbox["region_id"] == REGION.id
