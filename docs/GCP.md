@@ -109,7 +109,7 @@ Do not use the old tg_chats/sendPhoto instructions for the v1 path.
 ## Remaining required work
 
 1. Align the Sumatra/Kalimantan scope and night window decision with the team; record it in the worklog.
-2. Complete GK2A/Himawari ingest, the peat mask, the NASA POWER baseline, MAUT/neighbour support and calibration.
+2. Calibrate the Himawari/GK2A thresholds against more VIIRS nights and daytime slots (one night checked, see ENGINE.md); add night streaks and neighbour support.
 3. Complete the ADK/Gemini agent with VIIRS/imagery evidence and tool limits; drop the old path's ToPeCAl dependency.
 4. Complete alert closing, outbox recovery, historical decision snapshots and signed image URL refresh.
 5. Test real tokens, concurrent Firestore transactions, Telegram egress to demo recipients, the container build and the Firebase rewrite.

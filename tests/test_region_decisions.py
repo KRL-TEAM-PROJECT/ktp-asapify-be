@@ -121,13 +121,17 @@ def test_region_alert_fan_out_reaches_subscribers_and_updates_the_verification()
     assert inbox["region_id"] == REGION.id and inbox["cluster_id"] is None
 
 
-def test_worker_cycle_passes_the_verifier_only_when_configured(repo, monkeypatch):
+def test_worker_cycles_pass_the_verifier_and_firms_only_when_configured(repo, monkeypatch):
     from asapify_api.notification_tasks import require_worker
-    seen = {}
-    monkeypatch.setattr(engine_routes, "run_cycle", lambda *a, **kw: seen.update(kw) or {"ok": True})
+    seen, power = {}, {}
+    monkeypatch.setattr(engine_routes, "run_geo_cycle", lambda *a, **kw: seen.update(kw) or {"ok": True})
+    monkeypatch.setattr(engine_routes, "run_cycle", lambda *a, **kw: power.update(kw) or {"power": True})
     app.dependency_overrides[require_worker] = lambda: None
-    assert client().post("/_internal/engine/tick?batch=20&budget=240").json() == {"ok": True}
-    assert seen["batch"] == 20 and seen["budget_s"] == 240 and callable(seen["verify"])
+    assert client().post("/_internal/engine/geo-tick?budget=240").json() == {"ok": True}
+    assert seen["budget_s"] == 240 and callable(seen["verify"]) and callable(seen["hotspots"])
+    assert callable(seen["published"]) and callable(seen["observe"])
     monkeypatch.setattr(engine_routes, "Settings", lambda: type(SETTINGS)(project="p", firms_map_key=""))
-    client().post("/_internal/engine/tick")
-    assert seen["verify"] is None
+    client().post("/_internal/engine/geo-tick")
+    assert seen["verify"] is None and seen["hotspots"] is None and seen["budget_s"] == 240
+    assert client().post("/_internal/engine/tick?batch=20&budget=40").json() == {"power": True}
+    assert power == {"batch": 20, "budget_s": 40}                 # POWER only supports: no agent from that cycle

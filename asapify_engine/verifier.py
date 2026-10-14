@@ -67,7 +67,7 @@ class AgentNotConfigured(Exception):
 
 class VerificationRepo(Protocol):
     def get_region(self, region_id: str) -> dict | None: ...
-    def get_hour(self, region_id: str, observed_at: str) -> dict | None: ...
+    def get_slot(self, region_id: str, observed_at: str) -> dict | None: ...
     def reserve_agent_call(self, day: date, limit: int) -> int | None: ...
     def save_verification(self, region_id: str, record: dict) -> None: ...
 
@@ -163,8 +163,11 @@ def limit_tool_calls(tool, args: dict, tool_context: ToolContext) -> dict | None
 
 
 # --- one verification -------------------------------------------------------------------------------------------
+VIEW_KEYS = ("max_anomaly_k", "max_z", "n_hot", "cloud_fraction", "hot_lat", "hot_lon")
+
+
 def build_payload(region: Region, record: dict, trigger: str, now: datetime) -> str:
-    """What the backend sends the agent (design section 7.1, step 1), as YAML."""
+    """What the backend sends the agent (design section 7.1, step 1), as YAML: one slot record of geo.py."""
     inputs = record.get("inputs") or {}
     payload = {
         "region": {"id": region.id, "province": f"{PROVINCE_NAMES.get(region.province, 'unknown')} ({region.province})",
@@ -173,11 +176,14 @@ def build_payload(region: Region, record: dict, trigger: str, now: datetime) -> 
         "trigger": "automatic: the region entered ALERT" if trigger == "auto" else "manual: an operator asked",
         "observation": {
             "observed_at": record["observed_at"], "rules_engine_status": record["status"],
-            "reason": record.get("reason"), "utilities": record.get("utilities"),
-            **{k: inputs.get(k) for k in ("delta_t_k", "skin_temperature_k", "baseline_k",
-                                          "relative_humidity_pct", "cloud_cover_pct")},
-            "quality": record.get("quality"), "flags": record.get("flags"),
-            "sources": "NASA POWER skin temperature and humidity (reanalysis); Open-Meteo cloud cover (model)",
+            "reason": record.get("reason"), "utilities": record.get("utilities"), "night": record.get("night"),
+            **{k: inputs.get(k) for k in ("delta_t_k", "cloud_cover_pct", "relative_humidity_pct",
+                                          "hot_lat", "hot_lon")},
+            "satellites": {name: {k: view.get(k) for k in VIEW_KEYS} if view else None
+                           for name, view in (record.get("views") or {}).items()},
+            "support": record.get("support"), "quality": record.get("quality"), "flags": record.get("flags"),
+            "sources": "Himawari-9 and GK2A brightness temperatures every 10 minutes; Open-Meteo humidity (model); "
+                       "NASA FIRMS VIIRS and NASA POWER only as support",
         },
         "current_time": _iso(now),
     }
@@ -247,9 +253,9 @@ def verify_region(repo: VerificationRepo, region: Region, now: datetime, *, trig
     if not settings.agent_ready:
         raise AgentNotConfigured()
     doc = repo.get_region(region.id) or {}
-    record = (repo.get_hour(region.id, observed_at) if observed_at else None) or doc.get("latest")
+    record = (repo.get_slot(region.id, observed_at) if observed_at else None) or doc.get("latest")
     if not record:
-        raise LookupError(f"{region.id} has no assessed hour yet")
+        raise LookupError(f"{region.id} has no assessed slot yet")
     if repo.reserve_agent_call(now.date(), settings.agent_daily_quota) is None:
         raise QuotaExhausted()
     result = analyze_region(region, record, now, trigger=trigger, actor=actor, settings=settings, run=run)

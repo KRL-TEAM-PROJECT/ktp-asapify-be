@@ -7,3 +7,13 @@ google-cloud-storage==3.16.0
 httpx[socks]==0.28.1
 google-adk==2.11.0
 PyYAML==6.0.3
+# Himawari-9 / GK2A decoding (asapify_engine/satellites.py); satpy's ami_l1b reader imports pyspectral
+satpy==0.60.0
+pyresample==1.35.0
+pyspectral==0.14.3
+h5netcdf==1.8.1
+h5py==3.16.0
+dask==2026.8.0
+xarray==2026.9.0
+numpy==2.5.4
+shapely==2.2.0
