@@ -19,7 +19,7 @@ are later stages and are never reported as delivered. Google Chat is not used.
 | Operator decision | Firestore transaction: decision, alert reservation, audit; a second decision is refused |
 | Telegram | Text adapter in the Notification Engine; DM linking, `dry_run` by default, accepted/unknown status |
 | Cloud Run + GCS + Firestore + Artifact Registry | Live in `hack2skill-510921` since 9 Oct. Every merge to `main` that touches the API is tested and deployed by GitHub Actions (see [CLOUDSHELL.md](docs/CLOUDSHELL.md)). Firestore rules released 13 Oct (no direct browser access); data bucket still empty |
-| Risk engine | 65 peat regions, Himawari-9 + GK2A every 10 minutes (the two satellites confirm each other; ALERT only at night with both agreeing), VIIRS + NASA POWER as support, Fuzzy MAUT, state machine, audit record per slot. See [ENGINE.md](docs/ENGINE.md) |
+| Risk engine | 65 peat regions, Himawari-9 + GK2A every 10 minutes (the two satellites confirm each other; ALERT only at night with both agreeing), VIIRS + NASA POWER as support, Fuzzy MAUT, state machine, audit record per slot, hot pixels and nearby VIIRS per region, a day archive for the map's date picker. See [ENGINE.md](docs/ENGINE.md) |
 | Himawari/GK2A decoding | In the engine (`asapify_engine/satellites.py`, satpy), checked against VIIRS on one night slot; the older `pipeline/` code stays as reference ([ENGINE.md](docs/ENGINE.md) maps one to the other) |
 | ADK/Gemini agent | `geospatial_analyst` on Vertex AI with `fetch_firms_data` (NASA FIRMS): automatic on entering ALERT and the Re-verify button, YAML checked before it is stored, hard daily quota. Cluster `/verify` still returns 503 |
 | Alert list/close | Not implemented; endpoints return 503 and are not used by the UI yet |

@@ -20,6 +20,7 @@ import numpy as np
 
 MAD_SCALE = 1.4826                 # makes the MAD comparable with a standard deviation for normally distributed data
 BT_MIN_K, BT_MAX_K = 180.0, 400.0  # outside this range = fill value / broken pixel
+MAX_PIXELS = 5                     # hot pixels kept per region and satellite for the map (strongest first)
 
 
 @dataclass(frozen=True)
@@ -53,9 +54,14 @@ class RegionThermal:
     hot_lon: float | None
     mwir_k: float | None           # brightness temperatures at that pixel
     lwir_k: float | None
+    hot_pixels: tuple[tuple[float, float, float], ...] = ()   # (lat, lon, delta_bt above the background) of up to
+                                                              # MAX_PIXELS hot pixels, strongest first
 
     def summary(self) -> dict:
-        return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in self.__dict__.items()}
+        out = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in self.__dict__.items() if k != "hot_pixels"}
+        # Firestore stores no arrays inside arrays
+        out["hot_pixels"] = [{"lat": lat, "lon": lon, "anomaly_k": dk} for lat, lon, dk in self.hot_pixels]
+        return out
 
 
 def _robust(values: np.ndarray, floor: float) -> tuple[float, float]:
@@ -98,8 +104,13 @@ def region_thermal(mwir: np.ndarray, lwir: np.ndarray, peat: np.ndarray, lat: np
         return RegionThermal(**counts, **stats, max_anomaly_k=0.0, max_z=0.0, hot_on_peat=None, hot_lat=None,
                              hot_lon=None, mwir_k=None, lwir_k=None)
     i = int(np.argmax(anomaly))
+    flat = anomaly.ravel()
+    hot_idx = np.flatnonzero(hot)
+    hot_idx = hot_idx[np.argsort(flat[hot_idx])[::-1][:MAX_PIXELS]]
     return RegionThermal(
         **counts, **stats, max_anomaly_k=round(float(anomaly.flat[i]), 3),
         max_z=round(float(anomaly.flat[i]) / mad, 2), hot_on_peat=bool(peat.flat[i]),
         hot_lat=round(float(lat.flat[i]), 4), hot_lon=round(float(lon.flat[i]), 4),
-        mwir_k=round(float(mwir.flat[i]), 2), lwir_k=round(float(lwir.flat[i]), 2))
+        mwir_k=round(float(mwir.flat[i]), 2), lwir_k=round(float(lwir.flat[i]), 2),
+        hot_pixels=tuple((round(float(lat.flat[j]), 4), round(float(lon.flat[j]), 4), round(float(flat[j]), 2))
+                         for j in hot_idx))

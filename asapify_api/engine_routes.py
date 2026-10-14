@@ -1,7 +1,9 @@
-"""Risk-engine endpoints: region states, agent verification and decisions for operators; the cycles for the worker."""
+"""Risk-engine endpoints: region states, the day archive, agent verification and decisions for operators; the cycles
+for the worker."""
 from __future__ import annotations
 
-from datetime import timedelta
+import json
+from datetime import date, timedelta
 from functools import lru_cache
 from typing import Annotated
 
@@ -11,7 +13,7 @@ from pydantic import Field
 
 from asapify_engine import firms, satellites
 from asapify_engine.config import Settings
-from asapify_engine.geo import run_geo_cycle
+from asapify_engine.geo import day_window, run_geo_cycle
 from asapify_engine.ingest import run_cycle
 from asapify_engine.regions import Region, load_regions
 from asapify_engine.verifier import MAX_TOOL_CALLS, AgentNotConfigured, QuotaExhausted, verify_region
@@ -22,7 +24,8 @@ from .notification_store import get_notification_store
 from .notification_tasks import enqueue_pending, get_tasks, require_worker
 
 RegionID = Annotated[str, Path(pattern=r"^R\d{1,2}\.\d{2}[NS]\d{2,3}\.\d{3}E$")]
-SUMMARY = ("status", "since", "observed_at", "utilities", "updated_at", "agent_requested_at", "last_agent_at",
+DAY = r"^\d{4}-\d{2}-\d{2}$"   # a WIB calendar day, YYYY-MM-DD
+SUMMARY =("status", "since", "observed_at", "utilities", "updated_at", "agent_requested_at", "last_agent_at",
            "verification")
 MANUAL_GAP = timedelta(minutes=5)   # one manual verification per region per 5 minutes: double clicks, quota
 router = APIRouter()
@@ -46,6 +49,14 @@ def _region(region_id: str) -> Region:
     return region
 
 
+def _day(value: str) -> str:
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        raise ApiProblem(400, "VALIDATION", "Not a calendar date.")
+    return value
+
+
 @router.get("/api/v1/operator/regions", dependencies=[Depends(require_operator)])
 def regions(repo=Depends(get_engine_repo)):
     """Every observation region with its current status; status is null until the first cycle reaches it."""
@@ -61,13 +72,35 @@ def regions(repo=Depends(get_engine_repo)):
 
 
 @router.get("/api/v1/operator/regions/{region_id}", dependencies=[Depends(require_operator)])
-def region(region_id: RegionID, hours: int = Query(24, ge=1, le=72), repo=Depends(get_engine_repo)):
-    """State, the last `hours` of 10-minute slots (6 reads an hour, so at most 432) and POWER support."""
+def region(region_id: RegionID, hours: int = Query(24, ge=1, le=72),
+           day: str | None = Query(None, alias="date", pattern=DAY), repo=Depends(get_engine_repo)):
+    """State, the last `hours` of 10-minute slots (6 reads an hour, so at most 432) and POWER support; with `date`,
+    the slots of that WIB day instead (at most 144 reads)."""
     _region(region_id)
-    detail = repo.region_detail(region_id, hours)
+    detail = repo.region_detail(region_id, hours, day_window(_day(day)) if day else None)
     if detail is None:
         raise ApiProblem(503, "DATA_NOT_READY", "This region has not been processed yet.")
     return detail
+
+
+@router.get("/api/v1/operator/days", dependencies=[Depends(require_operator)])
+def days(month: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"), repo=Depends(get_engine_repo)):
+    """The date picker: one month's archived days with their ALERT / WARNING marks, and the first and last day."""
+    first, last = repo.day_range()
+    return {"first": first, "last": last, "days": sorted(repo.list_days(month), key=lambda d: d["date"])}
+
+
+@router.get("/api/v1/operator/days/{day}", dependencies=[Depends(require_operator)])
+def archived_day(day: Annotated[str, Path(pattern=DAY)], repo=Depends(get_engine_repo)):
+    """Every archived slot of one WIB day, oldest first (one read): statuses and delta T in `regions` order, plus the
+    hot pixels and nearby VIIRS of the regions where a satellite saw one."""
+    doc = repo.get_day(_day(day))
+    if doc is None:
+        raise ApiProblem(404, "NOT_FOUND", "Nothing was archived on this day.")
+    regions = doc.get("regions") or []
+    slots = [{"key": key, **json.loads(text)} for key, text in sorted((doc.get("slots") or {}).items())]
+    # after a change of the regions file in the middle of a day, the older slots no longer line up: left out
+    return {"date": doc["date"], "regions": regions, "slots": [s for s in slots if len(s["status"]) == len(regions)]}
 
 
 @router.get("/api/v1/operator/agent", dependencies=[Depends(require_operator)])

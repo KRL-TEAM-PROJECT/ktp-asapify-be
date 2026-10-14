@@ -44,7 +44,8 @@ class Repo(Protocol):
     def get_baseline(self, region_id: str) -> dict | None: ...
     def save_baseline(self, region_id: str, doc: dict) -> None: ...
     def save_region(self, doc: dict, hours: list[dict]) -> None: ...                 # POWER support
-    def save_slots(self, entries: list[tuple[dict, dict | None, list[dict]]]) -> None: ...   # (state, slot, transitions)
+    def save_slots(self, entries: list[tuple[dict, dict | None, list[dict]]],   # (state, slot, transitions)
+                   day: dict | None = None) -> None: ...                       # + the slot's day archive entry
 
 
 # --- state <-> documents (used by the geostationary cycle) ------------------------------------------------------
