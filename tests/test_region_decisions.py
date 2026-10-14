@@ -11,7 +11,7 @@ from asapify_api.core import utc_now
 from asapify_api.engine_routes import get_engine_repo
 from asapify_engine.regions import load_regions
 from test_engine_ingest import FakeRepo
-from test_notifications import FakeDB, FakeRef, count, fanout_db
+from test_notifications import FakeDB, count, fanout_db
 from test_verifier import RECORD, SETTINGS, TOOL, YAML_OK, fake_run
 
 REGION = load_regions()[0]
@@ -101,24 +101,17 @@ def test_decision_validation(repo, monkeypatch):
     assert c.post(url, json={**body, "status": "SAFE"}).status_code == 400   # the decision cannot set a level
 
 
-class PathDB(FakeDB):
-    """FakeDB plus db.document('a/b/c/d') for the verification path of region alerts."""
-    def document(self, path):
-        kind, doc_id = path.rsplit("/", 1)
-        return FakeRef(self, kind, doc_id)
-
-
 def test_region_alert_fan_out_reaches_subscribers_and_updates_the_verification():
     from asapify_api.notification_store import NotificationStore
-    db, source = PathDB(), f"engine_regions/{REGION.id}/verifications/20261013T060000Z"
+    db, source = FakeDB(), f"engine_regions/{REGION.id}/verifications/20261013T060000Z"
     db.docs.update(fanout_db(4).docs)
-    db.docs["alerts/A-test"].update({"cluster_id": None, "region_id": REGION.id, "source_path": source})
+    db.docs["alerts/A-test"].update({"region_id": REGION.id, "source_path": source})
     db.docs[source] = {"id": "20261013T060000Z", "decision": {"action": "publish", "notifications": {}}}
     summary = NotificationStore(db).fan_out("A-test")
     assert summary == {"state": "outbox_saved", "recipients": 4, "jobs": 4}
     assert db.docs[source]["decision"]["notifications"] == summary and count(db, "notification_inbox") == 4
     inbox = next(v for k, v in db.docs.items() if k.startswith("notification_inbox/"))
-    assert inbox["region_id"] == REGION.id and inbox["cluster_id"] is None
+    assert inbox["region_id"] == REGION.id
 
 
 def test_worker_cycles_pass_the_verifier_and_firms_only_when_configured(repo, monkeypatch):

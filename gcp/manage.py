@@ -111,7 +111,6 @@ class Deploy:
                  "--min=0", "--max=2", "--cpu=1", "--memory=512Mi", "--timeout=60", "--concurrency=40",
                  "--update-env-vars=" + ",".join([
                      f"GOOGLE_CLOUD_PROJECT={self.project}", "FIRESTORE_DATABASE=asapify",
-                     f"ASAPIFY_DATA_BUCKET={self.data.removeprefix('gs://')}",
                      "NOTIFICATION_MODE=dry_run", "FCM_ENABLED=false",
                      "TELEGRAM_ENABLED=false", f"ASAPIFY_VERSION={version}"]))
         self.run("run", "services", "describe", "asapify-api", f"--region={self.region}", read=True)

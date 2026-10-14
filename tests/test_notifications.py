@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from asapify_api.app import app
 from asapify_api.auth import require_user
 from asapify_api.core import ApiProblem
-from asapify_api.notification_policy import Preferences, alert_payload, plan_recipient, dispatch_guard
+from asapify_api.notification_policy import Preferences, plan_recipient, dispatch_guard
 from asapify_api.notification_delivery import send
 from asapify_api.notification_store import get_notification_store
 from asapify_api.notification_tasks import CloudTasks, require_worker
@@ -20,12 +20,16 @@ NOW = '2026-10-08T23:00:00Z'
 PROFILE = {'uid': 'test-user', 'provinces': ['62'], 'consent': True, 'exercises': True,
            'channels': ['telegram', 'fcm', 'web_push', 'whatsapp', 'sms', 'gmail', 'lora', 'bluetooth_mesh'],
            'telegram_chat_id': '123', 'fcm_token': 'test-device-token-123456789'}
-CLUSTER = {'id': 'C-test', 'province': '62', 'replay': True}
+SOURCE = 'engine_regions/R-test/verifications/20261008T230000Z'
+
+
+def alert(text='EXERCISE', purpose='exercise'):
+    return {'id': 'A-test', 'region_id': 'R-test', 'province': '62', 'text': text, 'purpose': purpose,
+            'published_at': NOW, 'expires_at': '2026-10-09T00:00:00Z', 'status': 'active'}
 
 
 def planned(purpose='exercise'):
-    alert = alert_payload({**CLUSTER, 'replay': purpose == 'exercise'}, '<b>WARNING</b> anomaly indication.', NOW)
-    return plan_recipient(alert, copy.deepcopy(PROFILE), NOW)
+    return plan_recipient(alert('<b>WARNING</b> anomaly indication.', purpose), copy.deepcopy(PROFILE), NOW)
 
 
 def test_emergency_excludes_fcm_and_does_not_delay_sms_whatsapp():
@@ -46,7 +50,7 @@ def test_one_push_transport_and_stable_nonduplicated_job_ids():
 
 @pytest.mark.parametrize('change', [{'consent': False}, {'provinces': ['11']}, {'exercises': False}])
 def test_consent_region_and_exercise_opt_out(change):
-    assert plan_recipient(alert_payload(CLUSTER, 'EXERCISE', NOW), {**PROFILE, **change}, NOW) == (None, [])
+    assert plan_recipient(alert(), {**PROFILE, **change}, NOW) == (None, [])
 
 
 def test_future_adapters_blocked_and_escalation_due_time():
@@ -228,7 +232,7 @@ def test_ack_is_owner_scoped_and_idempotent(monkeypatch):
 
 def test_unlinked_telegram_does_not_turn_into_arbitrary_target():
     profile = {**PROFILE, 'telegram_chat_id': None}
-    _, jobs = plan_recipient(alert_payload(CLUSTER, 'EXERCISE', NOW), profile, NOW)
+    _, jobs = plan_recipient(alert(), profile, NOW)
     assert next(j for j in jobs if j['channel'] == 'telegram')['error'] == 'TELEGRAM_NOT_LINKED'
 
 
@@ -339,6 +343,10 @@ class FakeDB:
     def collection(self, kind):
         return FakeQuery(self, kind)
 
+    def document(self, path):
+        kind, doc_id = path.rsplit('/', 1)
+        return FakeRef(self, kind, doc_id)
+
     def get_all(self, refs):
         if self.stale_reads:  # Simulates a concurrent run that wrote after this read.
             self.stale_reads -= 1
@@ -351,10 +359,11 @@ class FakeDB:
 
 def fanout_db(subscribers):
     db = FakeDB()
-    db.docs['alerts/A-test'] = {'id': 'A-test', 'cluster_id': 'C-test', 'province': '62', 'caption': '<b>WARNING</b>',
+    db.docs['alerts/A-test'] = {'id': 'A-test', 'region_id': 'R-test', 'source_path': SOURCE, 'province': '62',
+                                'caption': '<b>WARNING</b>',
                                 'purpose': 'emergency', 'published_at': NOW, 'expires_at': '2026-10-09T00:00:00Z',
                                 'status': 'active', 'fanout': 'pending'}
-    db.docs['clusters/C-test'] = {'id': 'C-test', 'decision': {'action': 'publish', 'notifications': {'state': 'fanout_pending'}}}
+    db.docs[SOURCE] = {'id': '20261008T230000Z', 'decision': {'action': 'publish', 'notifications': {'state': 'fanout_pending'}}}
     subscriber = {'provinces': ['62'], 'consent': True, 'channels': ['telegram']}
     for i in range(subscribers):
         db.docs[f'notification_recipients/r{i:03}'] = {**subscriber, 'uid': f'u{i}', 'telegram_chat_id': str(i)}
@@ -374,7 +383,7 @@ def test_fanout_has_no_subscriber_cap_and_reaches_everyone_in_pages():
     assert summary == {'state': 'outbox_saved', 'recipients': 120, 'jobs': 120}
     assert count(db, 'notification_inbox') == 120 and count(db, 'notification_jobs') == 120
     assert db.docs['alerts/A-test']['fanout'] == 'done'
-    assert db.docs['clusters/C-test']['decision']['notifications'] == summary
+    assert db.docs[SOURCE]['decision']['notifications'] == summary
 
 
 def test_resumed_fanout_skips_existing_and_never_resets_a_claimed_job():

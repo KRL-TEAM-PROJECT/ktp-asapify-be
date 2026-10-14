@@ -109,7 +109,7 @@ def verify_backend(deploy):
     status, body = request(api_url + "/api/v1/health", headers)
     if status != 200 or json.loads(body).get("status") != "ok":
         raise RuntimeError(f"API health check failed: HTTP {status}.")
-    status, _ = request(api_url + "/api/v1/operator/pixels", headers)
+    status, _ = request(api_url + "/api/v1/operator/regions", headers)
     if status != 401:
         raise RuntimeError(f"Operator without Firebase token must return 401; received {status}.")
     worker_url = services["asapify-notify"]["status"]["url"]
@@ -153,7 +153,7 @@ console.log('Firebase public config present; real Google sign-in must still be t
             apply=deploy.apply, cwd=frontend)
     if deploy.apply:
         for path, expected in (("/", 200), ("/notifications", 200), ("/api/v1/health", 200),
-                               ("/api/v1/operator/pixels", 401)):
+                               ("/api/v1/operator/regions", 401)):
             status, body = request(ORIGIN + path)
             if status != expected:
                 raise RuntimeError(f"Hosting {path}: expected {expected}, received {status}.")

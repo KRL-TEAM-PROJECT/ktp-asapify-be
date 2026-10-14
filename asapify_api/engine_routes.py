@@ -139,7 +139,7 @@ class RegionDecision(DecisionInput):
 @router.post("/api/v1/operator/regions/{region_id}/decision", status_code=201)
 def decision(region_id: RegionID, body: RegionDecision, actor=Depends(require_operator),
              repo=Depends(get_engine_repo)):
-    """Publish or reject one verification: once, audited, and publish needs a caption (same rules as clusters)."""
+    """Publish or reject one verification: once, audited, and publish needs a caption."""
     region = _region(region_id)
     body.validate_action()
     publish, now = body.action == "publish", utc_now()
@@ -147,7 +147,7 @@ def decision(region_id: RegionID, body: RegionDecision, actor=Depends(require_op
     result = {"action": body.action, "by": actor["email"], "at": iso(now),
               "reason": None if publish else body.reason.strip(), "alert_id": alert_id if publish else None,
               "notifications": {"state": "fanout_pending", "recipients": 0, "jobs": 0} if publish else None}
-    alert = {"id": alert_id, "region_id": region_id, "verification_id": body.verification_id, "cluster_id": None,
+    alert = {"id": alert_id, "region_id": region_id, "verification_id": body.verification_id,
              "source_path": f"engine_regions/{region_id}/verifications/{body.verification_id}",
              "province": region.province, "caption": body.caption, "published_by": actor["email"],
              "published_at": iso(now), "status": "active", "closed_at": None, "closed_by": None, "telegram": None,

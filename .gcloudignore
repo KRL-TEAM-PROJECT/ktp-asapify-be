@@ -6,6 +6,6 @@ __pycache__/
 .env
 .env.*
 !.env.example
-pipeline/assets/
+tools/khg/
 tests/
 docs/
