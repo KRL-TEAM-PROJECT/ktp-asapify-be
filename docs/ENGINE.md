@@ -1,5 +1,8 @@
 # Risk engine, for readers of `pipeline/`
 
+`pipeline/` was removed on 15 Oct 2026; read it in git history (`git show b6fa6fd:pipeline/rules.py`). Its KHG
+shapefile moved to `tools/khg/`.
+
 `asapify_engine/` is the live engine. It implements the BE team's design document (`asapify_rancangan_proyek.md`)
 and keeps the conventions of `pipeline/` from the initial commit: frozen dataclasses, a `Status` enum, a `RuleConfig`
 of hypotheses, pure rule functions, a `Repo` protocol with a `run_cycle`, and an agent contract in `verifier.py`.

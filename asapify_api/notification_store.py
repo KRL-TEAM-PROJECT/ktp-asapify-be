@@ -98,7 +98,7 @@ class NotificationStore:
         """
         alert_ref = self.db.collection('alerts').document(alert_id)
         alert = alert_ref.get().to_dict()
-        payload = {'id': alert['id'], 'cluster_id': alert.get('cluster_id'), 'region_id': alert.get('region_id'),
+        payload = {'id': alert['id'], 'region_id': alert.get('region_id'),
                    'province': str(alert['province']),
                    'text': alert['caption'], 'purpose': alert['purpose'], 'published_at': alert['published_at'],
                    'expires_at': alert['expires_at'], 'status': alert['status']}
@@ -123,10 +123,8 @@ class NotificationStore:
         summary = {'state': 'outbox_saved' if recipients else 'no_recipients', 'recipients': recipients, 'jobs': jobs}
         batch = self.db.batch()
         batch.update(alert_ref, {'fanout': 'done', 'notifications': summary})
-        # Region alerts point at their verification document; cluster alerts at the cluster.
-        source = (self.db.document(alert['source_path']) if alert.get('source_path')
-                  else self.db.collection('clusters').document(alert['cluster_id']))
-        batch.update(source, {'decision.notifications': summary})
+        # The alert points at the verification document that holds the decision.
+        batch.update(self.db.document(alert['source_path']), {'decision.notifications': summary})
         batch.commit()
         return summary
 

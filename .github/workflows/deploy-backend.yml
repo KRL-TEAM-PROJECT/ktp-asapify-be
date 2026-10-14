@@ -101,7 +101,7 @@ jobs:
           done
           echo "health version: $version"
           test "$version" = "$TAG"
-          code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/api/v1/operator/pixels")
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/api/v1/operator/regions")
           echo "operator without token: $code"
           test "$code" = 401
 

@@ -91,7 +91,7 @@ gcloud run services proxy asapify-api --project "$ASAPIFY_PROJECT_ID" --region a
 ```
 
 From another terminal: `curl -i http://127.0.0.1:8080/api/v1/health` must return 200;
-`curl -i http://127.0.0.1:8080/api/v1/operator/pixels` must return 401.
+`curl -i http://127.0.0.1:8080/api/v1/operator/regions` must return 401.
 A valid Firebase token without the operator role must get 403. An expired/revoked token must get 401.
 Check authorised access with an operator token from the app; never paste tokens into chats or commits.
 
@@ -109,9 +109,8 @@ approved by an admin. Hosting deployment is described in the FE repository's `do
 
 ## 4. Connect data and notifications
 
-Use `tools/publish_snapshot.py` with real output following DATA_CONTRACT.md.
-The manifest is published after the objects and details are complete. The manifest's `replay` is inherited by
-clusters, so a backtest is never published as a real warning.
+The engine writes its own data: Cloud Scheduler calls the worker's geo tick every 10 minutes
+(`gcp/geo-setup.sh`, see [ENGINE.md](ENGINE.md)).
 
 The old inline Telegram path was replaced by a multi-channel outbox. Follow [NOTIFICATIONS.md](NOTIFICATIONS.md)
 for the worker, Cloud Tasks, subscriber consent, Telegram DM, exercise push, Firestore indexes and cloud tests.

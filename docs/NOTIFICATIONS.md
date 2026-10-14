@@ -131,7 +131,7 @@ Set `FCM_ENABLED=true` on the API and worker only for exercise/non-emergency tes
 ### Cloud tests still needed
 
 - Real Firebase token: a subscriber can open their own inbox, but operator endpoints stay refused.
-- Concurrent Firestore transactions and indexes: two operators publishing the same cluster publish it once.
+- Concurrent Firestore transactions and indexes: two operators publishing the same verification publish it once.
 - Two identical Cloud Tasks jobs: one claim; stop the worker after a claim to check `unknown`.
 - Withdraw consent/acknowledge before a job is due and confirm the cancellation; test expiry and fan-out
   above 50 subscribers (more than one page), including the API dying mid fan-out and the sweep resuming it.

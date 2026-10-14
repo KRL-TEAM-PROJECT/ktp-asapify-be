@@ -49,14 +49,6 @@ def capabilities() -> list[dict]:
             for c in CHANNELS]
 
 
-def alert_payload(cluster: dict, caption: str, now: str) -> dict:
-    exercise = cluster.get('replay') is True
-    return {'id': 'A-' + cluster['id'].removeprefix('C-'), 'cluster_id': cluster['id'],
-            'province': str(cluster['province']), 'text': caption,
-            'purpose': 'exercise' if exercise else 'emergency', 'published_at': now,
-            'expires_at': iso(as_time(now) + timedelta(hours=1)), 'status': 'active'}
-
-
 def plan_recipient(alert: dict, recipient: dict, now: str, escalation_seconds: int = 120):
     """Inbox is authoritative; provider acceptance never serves as an acknowledgement.
 
