@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from math import inf
+from math import inf, nan
 
 import pytest
 
@@ -108,6 +108,39 @@ def test_support_only_ever_raises_alert():
     lifted = assess(6.8, 35.0, cloud=10.0, support={"viirs_support": 1.0, "power_support": 1.0})
     assert lifted.utilities["ALERT"] == 0.5692 and lifted.status is Status.ALERT
     assert assess(6.8, 35.0, cloud=10.0, support={"unknown": 1.0}).status is Status.WARNING
+
+
+@pytest.mark.parametrize("delta_t", [0.0, 1.5, 1.6, 1.75, 1.8, 1.9, 5.0])
+def test_alert_needs_a_high_thermal_anomaly(delta_t):
+    """Dry air or supporting data alone never give ALERT: without delta_t_high the ALERT utility is 0."""
+    dry = assess(delta_t, 25.0, cloud=10.0, support={"viirs_support": 1.0, "power_support": 1.0})
+    assert dry.memberships["delta_t_high"] == 0.0
+    assert dry.utilities["ALERT"] == 0.0 and dry.status is not Status.ALERT
+    assert "no high thermal anomaly" in dry.reason
+    assert "no high thermal anomaly" not in assess(0.5, 80.0, cloud=10.0).reason   # said only when it changed a value
+    assert assess(6.5, 25.0, cloud=10.0).utilities["ALERT"] > 0.4   # delta_t_high > 0: humidity counts again
+
+
+@pytest.mark.parametrize("delta_t, cloud", [(nan, 10.0), (inf, 10.0), (-inf, 10.0), (9.0, nan), (9.0, -1.0),
+                                            (9.0, 101.0)])
+def test_invalid_thermal_or_cloud_is_not_observable(delta_t, cloud):
+    result = assess(delta_t, 25.0, cloud=cloud)
+    assert result.status is Status.NO_OBSERVABLE and result.utilities == {}
+
+
+@pytest.mark.parametrize("humidity", [nan, inf, -10.0, 150.0])
+def test_invalid_humidity_counts_as_unavailable(humidity):
+    result = assess(9.0, humidity, cloud=10.0)
+    assert result.status is Status.ALERT and result.utilities["ALERT"] == 1.0
+    assert "humidity_low" not in result.memberships and "humidity unavailable" in result.reason
+
+
+def test_support_is_finite_and_at_most_one():
+    full = assess(6.8, 35.0, cloud=10.0, support={"viirs_support": 1.0})
+    assert assess(6.8, 35.0, cloud=10.0, support={"viirs_support": 5.0}).utilities == full.utilities
+    without = assess(6.8, 35.0, cloud=10.0)
+    assert assess(6.8, 35.0, cloud=10.0, support={"viirs_support": nan}).utilities == without.utilities
+    assert "viirs_support" not in assess(6.8, 35.0, cloud=10.0, support={"viirs_support": nan}).memberships
 
 
 # ---------- state machine ----------

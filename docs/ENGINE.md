@@ -55,11 +55,16 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    proof of no fire. POWER no longer sets any status; its hourly cycle stays and writes the region's `power` summary.
 7. **Other inputs.** Cloud comes from the satellites' own 10.4 µm channel (colder than 270 K = cloud top). Relative
    humidity is Open-Meteo's model value for the slot's hour (one request for all regions per hour); without it the
-   rules use the thermal input alone and say so in the reason.
-8. **Storage.** Firestore database `asapify`, see the top of `repo.py` for every collection. Slot records live in
+   rules use the thermal input alone and say so in the reason. A missing, non-finite or out-of-range input counts
+   as unavailable, never as a value: no ΔT or cloud is NO_OBSERVABLE, humidity outside 0-100 % is left out, and
+   supporting values are kept within 0-1.
+8. **ALERT needs heat.** Humidity and supporting data only weigh in when ΔT has a high membership: with
+   `delta_t_high` = 0 the ALERT utility is set to 0 and the reason says so. Before this, dry air (RH < 30 %) alone
+   gave ALERT 0.4 and, with ΔT around 1.5-1.9 K, won through the safety margin.
+9. **Storage.** Firestore database `asapify`, see the top of `repo.py` for every collection. Slot records live in
    `engine_regions/{id}/slots/{YYYYMMDDHHMM}`; POWER hours (support only) stay in `hours`; the map's day archive
    lives in `engine_days/{YYYY-MM-DD}` (below).
-9. **Agent output.** `status confirmed / uncertain / negative` became the design's YAML schema with English keys:
+10. **Agent output.** `status confirmed / uncertain / negative` became the design's YAML schema with English keys:
    `validation_status` (CONFIRMED / REJECTED / NEEDS_MANUAL_REVIEW), `confidence_score`, `analysis`,
    `supporting_data` and `draft_operator_alert`. The verdict still has no level field: the agent cannot change it.
 
