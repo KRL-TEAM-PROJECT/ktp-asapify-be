@@ -107,3 +107,32 @@ def test_an_unlinked_group_job_is_cancelled_at_claim(store):
     store.unlink_group(job['group_id'])
     assert store.claim(job['id']) is None
     assert store.db.docs[path]['status'] == 'cancelled' and store.db.docs[path]['error'] == 'GROUP_UNLINKED'
+
+
+def hook(message):
+    return client().post('/api/v1/notifications/telegram-webhook', json=message, headers=HOOK).json()
+
+
+def test_the_bot_answers_start_in_the_group_with_the_link_result(store, capsys):
+    code = link_code(client())
+    linked = hook(group_message(f'/start@asapify_alert_bot {code}'))
+    assert linked['method'] == 'sendMessage' and linked['chat_id'] == -1001 and linked['text'].startswith('Linked.')
+    assert hook(group_message('/start'))['text'].startswith('This group is linked')
+    assert hook(group_message(f'/start {code}', chat_id=-2002))['text'].startswith('This code is not valid')
+    assert hook(group_message('/start', chat_id=-2002))['text'].startswith('To link this group')
+    assert hook(group_message('hello')) == {'ok': True}   # anything else gets no answer
+    logged = capsys.readouterr().out
+    assert '"outcome": "linked"' in logged and code not in logged and '-1001' not in logged
+
+
+def test_a_pasted_startgroup_link_also_links(store):
+    code = link_code(client())
+    answer = hook(group_message(f'/start https://t.me/asapify_alert_bot?startgroup={code}'))
+    assert answer['text'].startswith('Linked.') and [g['title'] for g in store.groups()] == ['ASAPify Notified']
+
+
+def test_a_private_chat_is_pointed_to_the_join_page(store, monkeypatch):
+    monkeypatch.setenv('ASAPIFY_PUBLIC_ORIGIN', 'https://asapify.example')
+    answer = hook(group_message('halo', chat_id=777, kind='private'))
+    assert answer['chat_id'] == 777 and answer['text'].endswith('https://asapify.example/join')
+    assert store.groups() == []

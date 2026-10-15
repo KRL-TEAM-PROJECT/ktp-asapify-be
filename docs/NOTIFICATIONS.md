@@ -3,8 +3,9 @@
 **Telegram works through one group (team decision, 15 October 2026).** The team keeps a Telegram group (for
 example "ASAPify Notified"). An operator adds the ASAPify bot to it from the app, and from then on the bot posts
 every alert an operator publishes there. Anyone who wants to know about fires joins the group from the app's public
-join page (`/join`) and reads it. Nobody subscribes, links a personal chat or keeps an inbox in the app. The bot only
-posts alerts: it answers no questions and reads no other messages.
+join page (`/join`) and reads it. Nobody subscribes, links a personal chat or keeps an inbox in the app. The bot posts
+alerts and answers only two things: `/start` in a group (whether the group is now linked) and any private message (a
+pointer to `/join`). It answers no questions.
 
 Status: deployed to `hack2skill-510921` in `dry_run`; no message has reached a real group yet.
 
@@ -71,8 +72,12 @@ application's database rules.** The one index serves the outbox scan (`notificat
    `/api/v1/notifications/telegram-webhook` with that secret (`allowed_updates=["message"]`).
 4. An operator opens the Regions page, Telegram groups, "Add the bot to a group". The app gets a one-time
    `t.me/<bot>?startgroup=<code>` link (10 minutes, stored hashed, used once). Telegram asks which group, adds the
-   bot and posts `/start@<bot> <code>` there; the webhook links that group and its title shows in the panel. The
-   bot's privacy mode can stay on: Telegram delivers that command to the bot either way.
+   bot and posts `/start@<bot> <code>` there; the webhook links that group and its title shows in the panel. Telegram
+   does not always post that message (never when the bot is already in the group), so the panel also shows it to
+   copy and send in the group by hand. The bot answers in the group: "Linked", or that the code is not valid or has
+   expired. The bot's privacy mode can stay on: Telegram delivers that command to the bot either way. Each answer is
+   logged as `telegram webhook` with an `outcome` (linked, already, no_code, bad_code, private, migrated) and never
+   the code, chat id or text.
 5. The operator pastes the group's invite link (Telegram: group, Invite via link, copy) into the panel. The public
    join page then shows a Join button for that group.
 
@@ -99,7 +104,7 @@ on `asapify-api` and `asapify-notify`.
 | PUT `/api/v1/operator/telegram-groups/{id}` | Operator; set or clear the invite link (`https://t.me/+…`, `t.me/joinchat/…` or a public `t.me/<name>`) |
 | DELETE `/api/v1/operator/telegram-groups/{id}` | Operator; stop alerts to a group |
 | GET `/api/v1/operator/alerts/{id}/deliveries` | Operator; each group's status, error and timestamps |
-| POST `/api/v1/notifications/telegram-webhook` | Webhook secret; links a group with an operator's code, never replies |
+| POST `/api/v1/notifications/telegram-webhook` | Webhook secret; links a group with an operator's code and answers `/start` and private messages in the webhook response |
 | POST `/_internal/notifications/dispatch` | Worker OIDC, body job_id |
 | POST `/_internal/notifications/sweep` | Scheduler OIDC; queue/unknown recovery |
 
