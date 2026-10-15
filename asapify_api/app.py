@@ -13,6 +13,7 @@ from .auth import require_operator
 from .core import ApiProblem, iso, utc_now
 from .engine_routes import router as engine_router
 from .notification_routes import router as notification_router
+from .public_routes import router as public_router
 
 app = FastAPI(title="ASAPify Operator API", version="0.1.0", docs_url=None, redoc_url=None,
               openapi_url=None)
@@ -73,3 +74,5 @@ app.include_router(engine_router)
 app.include_router(notification_router)
 
 app.include_router(access_router)
+
+app.include_router(public_router)
