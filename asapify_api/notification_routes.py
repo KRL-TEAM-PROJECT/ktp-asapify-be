@@ -3,6 +3,7 @@ webhook links the group, and the worker posts each published alert in it."""
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import re
 from typing import Annotated
@@ -35,6 +36,26 @@ def join(store=Depends(get_notification_store)):
     return store.join_links()
 
 
+LINKED = 'Linked. ASAPify will post its peat-fire alerts in this group.'
+ALREADY = 'This group is linked. ASAPify posts its peat-fire alerts here.'
+BAD_CODE = ('This code is not valid or has expired. In ASAPify open Regions, Telegram groups, "Add the bot to a group", '
+            'and send the new message here within 10 minutes.')
+NO_CODE = ('To link this group, send the message ASAPify shows under Regions, Telegram groups, "Add the bot to a group". '
+           'It looks like /start@<bot> <code>.')
+PRIVATE = 'I only post ASAPify peat-fire alerts in the alert group.'
+
+
+def reply(chat_id: int, text: str) -> dict:
+    """Telegram sends this as the bot's answer to the update, so the API needs no bot token."""
+    return {'method': 'sendMessage', 'chat_id': chat_id, 'text': text, 'link_preview_options': {'is_disabled': True}}
+
+
+def log(outcome: str, chat_type) -> None:
+    # Structured line for Cloud Logging; never the code, chat id or message text.
+    print(json.dumps({'severity': 'INFO', 'message': 'telegram webhook', 'outcome': outcome, 'chat_type': chat_type}),
+          flush=True)
+
+
 @router.post('/api/v1/notifications/telegram-webhook')
 async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: str | None = Header(default=None),
                            store=Depends(get_notification_store)):
@@ -49,17 +70,37 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         message = body.get('message', {})
         chat = message.get('chat', {})
         text = message.get('text', '')
-        # Only groups are linked, and only with an operator's one-time code; private chats are ignored.
-        if chat.get('type') in ('group', 'supergroup') and isinstance(chat.get('id'), int):
-            # t.me/<bot>?startgroup=<code> adds the bot and posts /start@<bot> <code> in the group the operator picked
-            group = re.fullmatch(r'/start(?:@[A-Za-z0-9_]{5,32})? ([A-Za-z0-9_-]{32})', text)
-            if group:
-                store.link_group(group.group(1), str(chat['id']), str(chat.get('title') or ''))
-            elif isinstance(message.get('migrate_to_chat_id'), int):
-                store.migrate_group(str(chat['id']), str(message['migrate_to_chat_id']))
+        kind, chat_id = chat.get('type'), chat.get('id')
+        if not isinstance(chat_id, int):
+            return {'ok': True}
+        if kind == 'private':
+            # Nobody subscribes in a private chat: point to the public join page.
+            origin = os.getenv('ASAPIFY_PUBLIC_ORIGIN', '').rstrip('/')
+            log('private', kind)
+            return reply(chat_id, PRIVATE + (f' Join it from {origin}/join' if origin.startswith('https://') else ''))
+        if kind not in ('group', 'supergroup'):
+            return {'ok': True}
+        if isinstance(message.get('migrate_to_chat_id'), int):
+            store.migrate_group(str(chat_id), str(message['migrate_to_chat_id']))
+            log('migrated', kind)
+            return {'ok': True}
+        # Only an operator's one-time code links a group: /start@<bot> <code>, which t.me/<bot>?startgroup=<code>
+        # posts when Telegram adds the bot, or which an operator sends by hand. Any other message gets no answer.
+        start = re.fullmatch(r'/start(?:@[A-Za-z0-9_]{5,32})?(?:\s+(\S+))?', text.strip())
+        if not start:
+            return {'ok': True}
+        argument = start.group(1) or ''
+        code = argument.split('startgroup=', 1)[-1]   # a pasted t.me link works too
+        if not argument:
+            outcome, answer = ('already', ALREADY) if store.group_linked(str(chat_id)) else ('no_code', NO_CODE)
+        elif re.fullmatch(r'[A-Za-z0-9_-]{32}', code) and store.link_group(code, str(chat_id), str(chat.get('title') or '')):
+            outcome, answer = 'linked', LINKED
+        else:
+            outcome, answer = 'bad_code', BAD_CODE
+        log(outcome, kind)
+        return reply(chat_id, answer)
     except (ValueError, TypeError, AttributeError):
         raise ApiProblem(400, 'VALIDATION', 'Invalid webhook payload.')
-    return {'ok': True}  # No outgoing message or disclosure of binding state.
 
 
 @router.get('/api/v1/operator/telegram-groups')

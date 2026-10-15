@@ -55,6 +55,9 @@ class NotificationStore:
         batch.delete(old_ref)
         batch.commit()
 
+    def group_linked(self, chat):
+        return self.db.collection(GROUPS).document(key(chat)).get().exists
+
     def groups(self):
         rows = [s.to_dict() for s in self.db.collection(GROUPS).stream()]
         # The chat id stays on the server; the operator sees the group's title and its invite link.
