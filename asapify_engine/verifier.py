@@ -17,7 +17,7 @@ import asyncio
 import math
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable, Literal, Protocol
 
@@ -33,8 +33,10 @@ if TYPE_CHECKING:
 
 MAX_TOOL_CALLS = 3          # FIRMS requests per verification
 MAX_OUTPUT_TOKENS = 1280    # per model call
-TIMEOUT_S = 44              # the model run; with the imagery fetch (8 s, in parallel) it fits the operator's 60 s request
+TIMEOUT_S = 44              # the model run; after the imagery and weather (at most GATHER_S) it fits the operator's 60 s
+GATHER_S = 10               # imagery and weather together, wall clock; whatever is late is left out
 FRESH_IMAGE_H = 24          # imagery this close to the observation can contradict a CONFIRMED verdict
+PASS_MARGIN_H = 1.0         # a hotspot up to an hour after the image pass is taken as already there (NOAA-21 trails)
 HOURS_WINDOW = (6, 48)      # FIRMS search window the agent may ask for, hours on each side of the observation
 BUFFER_KM = (0.0, 25.0)     # extra distance around the region bounds the agent may ask for
 EVIDENCE_LIMIT = 15         # hotspots shown to the agent and kept in the record
@@ -65,8 +67,15 @@ class VisualEvidence(BaseModel):
 
     @field_validator("image_date", mode="before")
     @classmethod
-    def _iso(cls, value):   # YAML reads an unquoted 2026-10-11 as a date, not a string
+    def _iso(cls, value):   # YAML reads an unquoted 2026-10-11 as a date (or a timestamp as a datetime), not a string
+        if isinstance(value, datetime):
+            return value.date().isoformat()
         return value.isoformat() if isinstance(value, date) else value
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _blank(cls, value):   # `notes:` with nothing after it is YAML null
+        return "" if value is None else value
 
 
 class AgentVerdict(BaseModel):
@@ -122,11 +131,16 @@ def parse_verdict(text: str) -> AgentVerdict:
     return AgentVerdict.model_validate(data)
 
 
-def check_visual(verdict: AgentVerdict, imagery_shown: dict | None) -> list[str]:
-    """The visual report must be about the images shown, and clear fresh imagery can contradict CONFIRMED."""
-    shown = bool(imagery_shown and imagery_shown.get("pictures"))
-    seen = verdict.visual_evidence
-    if not shown:
+def check_visual(verdict: AgentVerdict, imagery_shown: dict | None, found: list[dict] = ()) -> list[str]:
+    """The visual report can only hold back a CONFIRMED: images never confirm a fire, and a REJECTED or a manual
+    review stays as it is. The report must be about the images shown, and clear fresh imagery of both views can
+    contradict CONFIRMED, but only when a confident hotspot was already there at the image pass: an afternoon image
+    says nothing about a fire that started in the evening."""
+    if verdict.validation_status != "CONFIRMED":
+        return []
+    pictures = (imagery_shown or {}).get("pictures") or []
+    views, seen = {p.view for p in pictures}, verdict.visual_evidence
+    if not pictures:
         if seen and (seen.smoke != "no_image" or seen.burn_scar != "no_image"):
             return ["visual evidence reported without an image"]
         return []
@@ -135,9 +149,15 @@ def check_visual(verdict: AgentVerdict, imagery_shown: dict | None) -> list[str]
     problems = []
     if seen.image_date != imagery_shown["date"]:
         problems.append("image_date matches no image shown")
-    if (verdict.validation_status == "CONFIRMED" and seen.smoke == "not_visible" and seen.burn_scar == "not_visible"
-            and abs(imagery_shown["hours_before_observation"]) <= FRESH_IMAGE_H):
-        problems.append("clear imagery within 24 h shows neither smoke nor a burn scar")
+    if seen.burn_scar == "no_image" or (seen.smoke == "no_image" and "true_color" in views):
+        problems.append("no_image reported although the image was shown")
+    image_h = -imagery_shown["hours_before_observation"]   # the pass, in hours from the observation
+    before = any(h.get("confidence") in firms.CONFIDENT and h.get("hours_from_observation") is not None
+                 and h["hours_from_observation"] <= image_h + PASS_MARGIN_H
+                 for r in found for h in r.get("hotspots") or [])
+    if (seen.smoke == "not_visible" and seen.burn_scar == "not_visible" and views >= {v for v, _ in imagery.VIEWS}
+            and abs(image_h) <= FRESH_IMAGE_H and before):
+        problems.append("clear imagery within 24 h, after confident hotspots, shows neither smoke nor a burn scar")
     return problems
 
 
@@ -145,7 +165,7 @@ def check_consistency(verdict: AgentVerdict, results: list[dict], imagery_shown:
     """Backend checks (design section 7.1, step 7): numbers must come from a tool result; CONFIRMED needs evidence;
     the visual report must match the images shown."""
     found = [r for r in results if "error" not in r]
-    data, problems = verdict.supporting_data, check_visual(verdict, imagery_shown)
+    data, problems = verdict.supporting_data, check_visual(verdict, imagery_shown, found)
     if not found:
         if verdict.validation_status != "NEEDS_MANUAL_REVIEW" or data.firms_hotspot_count:
             problems.append("decided without any FIRMS result")
@@ -225,13 +245,15 @@ def build_payload(region: Region, record: dict, trigger: str, now: datetime, ima
         "observation": {
             "observed_at": record["observed_at"], "rules_engine_status": record["status"],
             "reason": record.get("reason"), "utilities": record.get("utilities"), "night": record.get("night"),
-            **{k: inputs.get(k) for k in ("delta_t_k", "cloud_cover_pct", "relative_humidity_pct",
-                                          "hot_lat", "hot_lon")},
+            **{k: inputs.get(k) for k in ("delta_t_k", "cloud_cover_pct", "relative_humidity_pct", "dry_z",
+                                          "dry_source", "hot_lat", "hot_lon")},
+            "delta_t_counted": record.get("adjust"),
             "satellites": {name: {k: view.get(k) for k in VIEW_KEYS} if view else None
                            for name, view in (record.get("views") or {}).items()},
             "support": record.get("support"), "quality": record.get("quality"), "flags": record.get("flags"),
-            "sources": "Himawari-9 and GK2A brightness temperatures every 10 minutes; Open-Meteo humidity (model); "
-                       "NASA FIRMS VIIRS and NASA POWER only as support",
+            "sources": "Himawari-9 and GK2A brightness temperatures, one slot rated every 15 minutes; dryness from "
+                       "NASA POWER humidity against its normal (Open-Meteo as fallback); NASA FIRMS VIIRS and NASA "
+                       "POWER skin temperature only as support",
         },
         "current_time": _iso(now),
         "imagery": ({"date": imagery_shown["date"], "hours_before_observation": imagery_shown["hours_before_observation"],
@@ -265,10 +287,11 @@ def gather(region: Region, record: dict, look: Look, weather: Weather) -> tuple[
         except Exception as exc:
             return {"error": type(exc).__name__}
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        pictures = pool.submit(safe, look, region.bounds, region.lon, observed_at)
-        conditions = pool.submit(safe, weather, lat, lon, observed_at)
-        return pictures.result(), conditions.result()
+    pool = ThreadPoolExecutor(max_workers=2)
+    jobs = (pool.submit(safe, look, region.bounds, region.lon, observed_at), pool.submit(safe, weather, lat, lon, observed_at))
+    wait(jobs, timeout=GATHER_S)   # a wall-clock bound: httpx timeouts are per read, a slow server can trickle on
+    pool.shutdown(wait=False, cancel_futures=True)
+    return tuple(job.result() if job.done() else {"error": "Timeout"} for job in jobs)
 
 
 def _imagery_record(shown: dict | None) -> dict | None:

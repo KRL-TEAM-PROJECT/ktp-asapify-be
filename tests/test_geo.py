@@ -303,11 +303,14 @@ def test_humidity_is_asked_once_an_hour_and_is_optional():
     assert summary["statuses"] == {"SAFE": 3}
 
 
+NORMAL = {"mean": [90.0] * 24, "std": [4.0] * 24}   # POWER's humidity normal per UTC hour
+
+
 @pytest.mark.parametrize("rh", [150.0, -5.0, math.nan])
 def test_an_invalid_humidity_is_recorded_as_missing_and_shifts_nothing(rh):
     """An invalid humidity is left out, so the audit record must not show it as an accepted input."""
     repo = FakeRepo()
-    repo.docs[REGIONS[0].id] = {"id": REGIONS[0].id, "power": {"rh_normal": [[90.0, 4.0]] * 24}}
+    repo.docs[REGIONS[0].id] = {"id": REGIONS[0].id, "power": {"rh_normal": NORMAL}}
     cycle(repo, {"himawari9": everywhere(), "gk2a": everywhere()}, rh=rh)
     record = repo.docs[REGIONS[0].id]["latest"]
     assert record["inputs"]["relative_humidity_pct"] is None and record["quality"]["relative_humidity"] == "MISSING"
@@ -316,11 +319,13 @@ def test_an_invalid_humidity_is_recorded_as_missing_and_shifts_nothing(rh):
 
 
 def test_dryness_comes_from_power_and_falls_back_to_open_meteo():
-    fresh = {"observed_at": "2026-10-09T18:00:00Z", "dry_z": 2.0, "rh_normal": [[90.0, 4.0]] * 24}
+    fresh = {"observed_at": "2026-10-09T18:00:00Z", "dry_z": 2.0, "rh_normal": NORMAL}
     assert geo.dryness(fresh, NIGHT, 70.0) == (2.0, "nasa_power")                 # one source: POWER vs its normal
     stale = {**fresh, "observed_at": "2026-10-05T18:00:00Z"}                       # older than 4 days
     assert geo.dryness(stale, NIGHT, 70.0) == (5.0, "open_meteo_fallback")      # (90 - 70) / 4
     assert geo.dryness({**stale, "rh_normal": None}, NIGHT, 70.0) == (None, None)
+    assert geo.dryness({**stale, "rh_normal": [[90.0, 4.0]] * 24}, NIGHT, 70.0) == (None, None)   # an unknown shape
+    assert geo.dryness({**fresh, "dry_z": None}, NIGHT, 70.0) == (5.0, "open_meteo_fallback")   # POWER has no RH
     assert geo.dryness(None, NIGHT, None) == (None, None)
     repo = FakeRepo()
     repo.docs[REGIONS[0].id] = {"id": REGIONS[0].id, "power": stale}

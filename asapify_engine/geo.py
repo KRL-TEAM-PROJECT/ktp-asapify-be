@@ -63,17 +63,20 @@ def dryness(power: dict | None, slot: datetime, humidity: float | None,
             fusion: FusionConfig = FusionConfig()) -> tuple[float | None, str | None]:
     """The air's dryness against its normal, in σ (positive = drier), and where it came from.
 
-    NASA POWER's own mean of its last 24 published hours while it is fresh (one source for normal and now); else this
-    hour's Open-Meteo humidity against POWER's normal for the hour, as a flagged fallback; else none.
+    NASA POWER's own mean of its last 24 published hours while it is fresh (one source for normal and now); else (POWER
+    late, or no usable humidity in those hours) this hour's Open-Meteo humidity against POWER's normal for the hour, as
+    a flagged fallback; else none.
     """
     power = power or {}
     if power.get("dry_z") is not None and power.get("observed_at"):
         if (slot - parse(power["observed_at"])).total_seconds() / 3600 <= fusion.power_max_age_hours:
             return power["dry_z"], "nasa_power"
-    normals = power.get("rh_normal") or []
-    normal = normals[slot.hour] if len(normals) == 24 else None
-    if humidity is not None and normal:
-        mean, std = normal
+    normals = power.get("rh_normal")
+    normals = normals if isinstance(normals, dict) else {}
+    means, stds = normals.get("mean") or [], normals.get("std") or []
+    mean = means[slot.hour] if len(means) == 24 else None
+    if humidity is not None and mean is not None:
+        std = stds[slot.hour] if len(stds) == 24 else None
         return round((mean - humidity) / max(std or 0.0, DRY_SIGMA_FLOOR), 3), "open_meteo_fallback"
     return None, None
 
@@ -106,7 +109,7 @@ def assess_slot(region: Region, views: dict[str, RegionThermal | None], slot: da
         "sources": {"thermal": THERMAL, "relative_humidity": openmeteo.SOURCE, "dryness": dry_source,
                     "viirs_support": "nasa_firms", "power_support": "nasa_power"},
         "status": result.status.value, "utilities": result.utilities, "memberships": result.memberships,
-        "adjust": result.adjust, "reason": result.reason,
+        "adjust": result.adjust or None, "reason": result.reason,
     }
     return result, record
 

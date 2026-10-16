@@ -1,4 +1,5 @@
 """The verification agent's visual inputs: NASA GIBS imagery and the weather at the hot pixel, all offline."""
+import time
 from datetime import date, datetime, timezone
 from urllib.parse import parse_qs, urlsplit
 
@@ -10,7 +11,7 @@ from test_verifier import RECORD, REGION, SETTINGS, TOOL, YAML_OK
 
 UTC = timezone.utc
 REAL_FETCH, REAL_WEATHER = imagery.fetch, openmeteo.fetch_weather   # conftest swaps them for offline fakes
-JPEG = b"\xff\xd8\xff\xe0 fake jpeg"
+JPEG = b"\xff\xd8\xff\xe0" + bytes(imagery.MIN_BYTES)   # as large as a picture with something in it
 
 
 class Answer:
@@ -63,6 +64,14 @@ def test_fetch_keeps_the_images_and_names_what_failed():
     assert all(kw["timeout"] == imagery.TIMEOUT_S for _, kw in client.urls)
 
 
+def test_a_blank_picture_is_left_out_and_the_type_is_read_in_any_case():
+    def answer(url):   # no data yet renders one flat colour: a tiny JPEG that would read as "clear, nothing there"
+        return Answer(JPEG, mime="Image/JPEG; charset=binary") if "TrueColor" in url else Answer(b"\xff\xd8 black")
+    got = REAL_FETCH(REGION.bounds, REGION.lon, datetime(2026, 10, 11, 18, 10, tzinfo=UTC), client=Client(answer))
+    assert [p.view for p in got["pictures"]] == ["true_color"] and got["pictures"][0].mime == "image/jpeg"
+    assert got["errors"] == ["false_color_swir: blank image (8 bytes)"]
+
+
 def test_fetch_never_raises():
     got = REAL_FETCH(REGION.bounds, REGION.lon, datetime(2026, 10, 11, 18, 10, tzinfo=UTC),
                      client=Client(Answer(status=503)))
@@ -84,31 +93,39 @@ def test_weather_gives_wind_humidity_and_the_last_day_of_rain():
 
 # ---------- the visual check in a verification ----------
 
+# a night slot (01:45 solar) and the afternoon pass before it, as imagery.overpass_date gives them
+NIGHT_RECORD = {**RECORD, "observed_at": "2026-10-10T18:10:00Z"}
+DAY, HOURS = imagery.overpass_date(datetime(2026, 10, 10, 18, 10, tzinfo=UTC), REGION.lon)   # 2026-10-10, 12.2 h
 PICTURE = imagery.Picture("true_color", f"T,{imagery.OVERLAY}", "https://gibs.example/true.jpg", "image/jpeg", JPEG)
-SHOWN = {"date": "2026-10-09", "hours_before_observation": 16.0, "pictures": [PICTURE], "errors": []}
-WEATHER = {"source": "open_meteo", "at": "2026-10-10T06:00Z", "wind_from_deg": 135, "precipitation_24h_mm": 0.0}
+SWIR = imagery.Picture("false_color_swir", f"S,{imagery.OVERLAY}", "https://gibs.example/swir.jpg", "image/jpeg", JPEG)
+SHOWN = {"date": DAY.isoformat(), "hours_before_observation": HOURS, "pictures": [PICTURE, SWIR], "errors": []}
+WEATHER = {"source": "open_meteo", "at": "2026-10-10T18:00Z", "wind_from_deg": 135, "precipitation_24h_mm": 0.0}
+# the same FIRMS answer, its confident hotspot before the afternoon pass (already burning) or after it (started later)
+EARLY = {**TOOL, "hotspots": [{**TOOL["hotspots"][0], "hours_from_observation": -13.0}]}
+LATE = {**TOOL, "hotspots": [{**TOOL["hotspots"][0], "hours_from_observation": -0.3}]}
 
 
-def visual(smoke="visible", scar="not_visible", day="2026-10-09"):
-    return YAML_OK.replace("draft_operator_alert:", f"""visual_evidence:
+def visual(smoke="visible", scar="not_visible", day=DAY.isoformat(), status="CONFIRMED", notes=" A grey plume."):
+    return YAML_OK.replace("validation_status: CONFIRMED", f"validation_status: {status}").replace(
+        "draft_operator_alert:", f"""visual_evidence:
   smoke: {smoke}
   burn_scar: {scar}
   image_date: {day}
-  notes: A grey plume drifts north-west from the marked hotspots.
+  notes:{notes}
 draft_operator_alert:""")
 
 
-def run_with(text, seen):
+def run_with(text, seen, results):
     def run(payload, state, settings, pictures=()):
         seen.update(payload=payload, pictures=list(pictures))
-        return text, [TOOL], {"model_calls": 2}
+        return text, results, {"model_calls": 2}
     return run
 
 
-def verify(text, shown=SHOWN, seen=None):
+def verify(text, shown=SHOWN, seen=None, results=(EARLY,)):
     seen = {} if seen is None else seen
-    return verifier.analyze_region(REGION, RECORD, datetime(2026, 10, 13, 6, tzinfo=UTC), trigger="auto",
-                                   settings=SETTINGS, run=run_with(text, seen),
+    return verifier.analyze_region(REGION, NIGHT_RECORD, datetime(2026, 10, 13, 6, tzinfo=UTC), trigger="auto",
+                                   settings=SETTINGS, run=run_with(text, seen, list(results)),
                                    look=lambda *a: shown, weather=lambda *a: WEATHER)
 
 
@@ -116,18 +133,24 @@ def test_the_model_gets_the_images_and_the_weather_and_the_record_keeps_the_urls
     seen = {}
     record = verify(visual(), seen=seen)
     assert record["validation_status"] == "CONFIRMED" and record["checks"] == []
-    assert seen["pictures"] == [PICTURE]
+    assert seen["pictures"] == [PICTURE, SWIR]
     assert "images_attached_in_order" in seen["payload"] and "wind_from_deg: 135" in seen["payload"]
-    assert record["imagery"] == {"date": "2026-10-09", "hours_before_observation": 16.0,
-                                 "images": [{"view": "true_color", "url": "https://gibs.example/true.jpg"}],
+    assert record["imagery"] == {"date": "2026-10-10", "hours_before_observation": 12.2,
+                                 "images": [{"view": "true_color", "url": "https://gibs.example/true.jpg"},
+                                            {"view": "false_color_swir", "url": "https://gibs.example/swir.jpg"}],
                                  "errors": []}
     assert record["visual_evidence"]["smoke"] == "visible" and record["weather"] == WEATHER
+
+
+CLEAR = "clear imagery within 24 h, after confident hotspots, shows neither smoke nor a burn scar"
 
 
 @pytest.mark.parametrize("text, problem", [
     (YAML_OK, "visual evidence missing although images were shown"),
     (visual(day="2026-10-08"), "image_date matches no image shown"),
-    (visual(smoke="not_visible"), "clear imagery within 24 h shows neither smoke nor a burn scar"),
+    (visual(smoke="not_visible"), CLEAR),
+    (visual(smoke="no_image"), "no_image reported although the image was shown"),
+    (visual(scar="no_image"), "no_image reported although the image was shown"),
 ])
 def test_a_visual_report_that_does_not_fit_the_images_goes_to_manual_review(text, problem):
     record = verify(text)
@@ -137,6 +160,51 @@ def test_a_visual_report_that_does_not_fit_the_images_goes_to_manual_review(text
 
 def test_cloud_over_the_place_says_nothing_and_does_not_block_confirmed():
     assert verify(visual(smoke="obscured", scar="obscured"))["validation_status"] == "CONFIRMED"
+
+
+def test_an_image_from_before_the_hotspots_does_not_contradict_them():
+    """The afternoon image cannot show a fire first detected that evening."""
+    record = verify(visual(smoke="not_visible"), results=(LATE,))
+    assert record["validation_status"] == "CONFIRMED" and record["checks"] == []
+
+
+def test_one_view_alone_does_not_contradict_confirmed():
+    """Smoke barely shows in the SWIR view and scars are harder in true colour: both must have been looked at."""
+    swir_only = {**SHOWN, "pictures": [SWIR]}
+    assert verify(visual(smoke="no_image", scar="not_visible"), shown=swir_only)["validation_status"] == "CONFIRMED"
+    assert verify(visual(smoke="not_visible"), shown={**SHOWN, "pictures": [PICTURE]})["checks"] == []
+
+
+def test_a_stale_image_says_nothing():
+    old = {**SHOWN, "hours_before_observation": 24.1}
+    assert verify(visual(smoke="not_visible"), shown=old)["validation_status"] == "CONFIRMED"
+
+
+@pytest.mark.parametrize("text", [YAML_OK.replace("CONFIRMED", "REJECTED"), visual(day="2026-10-08", status="REJECTED"),
+                                  visual(smoke="not_visible", status="REJECTED")])
+def test_the_visual_report_never_turns_a_rejection_into_a_manual_review(text):
+    """Only CONFIRMED is held back by the images; a REJECTED stays rejected, so the operator cannot publish it."""
+    record = verify(text)
+    assert record["validation_status"] == "REJECTED" and record["checks"] == []
+
+
+@pytest.mark.parametrize("notes, day", [("", DAY.isoformat()), (" null", DAY.isoformat()),
+                                        (" A plume.", f"{DAY.isoformat()}T05:30:00Z")])
+def test_a_blank_note_or_a_timestamp_still_parses(notes, day):
+    verdict = verifier.parse_verdict(visual(notes=notes, day=day))
+    assert verdict.visual_evidence.image_date == DAY.isoformat() and isinstance(verdict.visual_evidence.notes, str)
+
+
+def test_slow_imagery_or_weather_cannot_eat_the_model_time(monkeypatch):
+    monkeypatch.setattr(verifier, "GATHER_S", 0.2)
+
+    def slow(*args):
+        time.sleep(2)
+        return SHOWN
+    started = time.monotonic()
+    shown, weather = verifier.gather(REGION, NIGHT_RECORD, slow, lambda *a: WEATHER)
+    assert time.monotonic() - started < 1.0
+    assert shown == {"error": "Timeout"} and weather == WEATHER
 
 
 def test_without_images_the_model_must_not_claim_to_see_anything():

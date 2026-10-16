@@ -24,10 +24,12 @@ OVERLAY = "VIIRS_NOAA20_Thermal_Anomalies_375m_All"
 VIEWS = (("true_color", "VIIRS_NOAA20_CorrectedReflectance_TrueColor"),
          ("false_color_swir", "VIIRS_NOAA20_CorrectedReflectance_BandsM11-I2-I1"))
 OVERPASS = time(13, 30)     # local solar time of the NOAA-20 daytime pass
-READY_H = 3.0               # GIBS publishes a pass about 3 hours after it
+READY_H = 4.0               # GIBS publishes a pass about 3 hours after it; swath edges pass up to an hour off 13:30
 BUFFER_DEG = 0.1            # about 11 km around the region cell
 WIDTH = 768                 # pixels; about 100 m each across a region cell
-TIMEOUT_S = 8               # per image; both are fetched at once, inside the verification's time budget
+TIMEOUT_S = 8               # per request step; both are fetched at once, inside the verifier's GATHER_S
+MIN_BYTES = 12_000          # a smaller JPEG at this size is one flat colour: no data yet, or a solid cloud deck
+MIMES = ("image/jpeg", "image/png")   # what is asked for, and what Gemini takes inline
 
 
 @dataclass(frozen=True)
@@ -73,9 +75,11 @@ def fetch(bounds: tuple[float, float, float, float], lon: float, observed_at: da
         try:
             response = (client or httpx).get(url, timeout=TIMEOUT_S)
             response.raise_for_status()
-            mime = response.headers.get("content-type", "").split(";")[0].strip()
-            if not mime.startswith("image/"):   # GIBS answers a bad request with an XML exception, status 200
+            mime = response.headers.get("content-type", "").split(";")[0].strip().lower()
+            if mime not in MIMES:   # GIBS answers a bad request with an XML exception, status 200
                 return f"{view}: not an image ({mime or 'no content type'})"
+            if len(response.content) < MIN_BYTES:   # a blank picture would read as "clear, nothing there"
+                return f"{view}: blank image ({len(response.content)} bytes)"
             return Picture(view, f"{layer},{OVERLAY}", url, mime, response.content)
         except Exception as exc:   # imagery is support: the verification goes on without it
             return f"{view}: {type(exc).__name__}"

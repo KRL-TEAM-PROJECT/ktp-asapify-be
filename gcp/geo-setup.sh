@@ -13,7 +13,7 @@ read -r CALLER AUDIENCE < <(gcloud scheduler jobs describe asapify-engine-tick -
 [ -n "${AUDIENCE:-}" ] || { echo "asapify-engine-tick has no OIDC audience; set that job up first" >&2; exit 1; }
 VERB=create
 if gcloud scheduler jobs describe asapify-geo-tick --project "$P" --location "$R" >/dev/null 2>&1; then VERB=update; fi
-# minutes 5, 15, ... 55: GK2A lands about 22-24 minutes after its scan, so each run finds a slot both satellites have
+# minutes 5, 20, 35, 50: GK2A lands about 22-24 minutes after its scan, so each run finds a slot both satellites have
 run gcloud scheduler jobs "$VERB" http asapify-geo-tick --project "$P" --location "$R" \
   --schedule='5-59/15 * * * *' --time-zone=Etc/UTC --http-method=POST \
   --uri="$AUDIENCE/_internal/engine/geo-tick?budget=240" \

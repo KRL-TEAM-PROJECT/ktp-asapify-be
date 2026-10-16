@@ -74,8 +74,8 @@ def regions(repo=Depends(get_engine_repo)):
 @router.get("/api/v1/operator/regions/{region_id}", dependencies=[Depends(require_operator)])
 def region(region_id: RegionID, hours: int = Query(24, ge=1, le=72),
            day: str | None = Query(None, alias="date", pattern=DAY), repo=Depends(get_engine_repo)):
-    """State, the last `hours` of 10-minute slots (6 reads an hour, so at most 432) and POWER support; with `date`,
-    the slots of that WIB day instead (at most 144 reads)."""
+    """State, the slots of the last `hours` up to the latest one (4 reads an hour; at most 6 an hour, so 432) and
+    POWER support; with `date`, the slots of that WIB day instead (at most 144 reads)."""
     _region(region_id)
     detail = repo.region_detail(region_id, hours, day_window(_day(day)) if day else None)
     if detail is None:

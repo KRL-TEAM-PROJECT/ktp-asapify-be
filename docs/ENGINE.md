@@ -76,7 +76,8 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    temperature baseline. Each published POWER hour gets `dry_z = (normal − humidity) / max(σ, 3 %)` against the
    normal of its own hour (so the daily cycle is not an anomaly), and the region's `power.dry_z` is the mean of the
    last 24 published hours. POWER is 2-3 days late, which suits a signal that lasts days. While POWER's dryness is
-   older than 4 days, this hour's Open-Meteo humidity against POWER's normal is the fallback, flagged
+   older than 4 days, or POWER has no usable humidity in those hours, this hour's Open-Meteo humidity against
+   POWER's normal is the fallback, flagged
    `dryness_fallback:open_meteo` (two models, so a fixed offset between them may shift the curves).
 10. **Storage.** Firestore database `asapify`, see the top of `repo.py` for every collection. Slot records live in
    `engine_regions/{id}/slots/{YYYYMMDDHHMM}`; POWER hours (support only) stay in `hours`; the map's day archive
@@ -110,8 +111,10 @@ skipped and the day archive has gaps: smouldering peat changes over days, not mi
 `asapify-engine-tick`). One request asks POWER for its latest published hour; most cycles stop there (one Firestore
 read). New hours are written per region to `hours` with their skin-temperature anomaly and `dry_z`, and summarised
 as `power` on the region document: the latest hour, `dry_z` (mean of the last 24 published hours), `dry_z_hours` and
-`rh_normal` (that day's humidity normal per UTC hour, for the fallback). The baseline table in `engine_baselines`
-holds both normals (`entries`, `entries_rh`); a table built before 16 October without `entries_rh` is rebuilt once.
+`rh_normal` (that day's humidity normal per UTC hour for the fallback, as two lists of 24, `mean` and `std`:
+Firestore stores no array inside an array). The baseline table in `engine_baselines` holds both normals (`entries`,
+`entries_rh`); a table built before 16 October without `entries_rh` is rebuilt once, and a `power` summary without
+`rh_normal` is rewritten on the next tick, without waiting for POWER's next hours.
 
 ## Hot pixels on the map and the day archive
 
@@ -192,16 +195,20 @@ freeze: treat every number as a hypothesis.
 - **Visual check** (`imagery.py`, since 16 October 2026). Before the model runs, the backend fetches two NASA GIBS
   WMS images of the region plus about 11 km: VIIRS NOAA-20 true colour (smoke) and false colour M11-I2-I1 (burn
   scars, active fire, through thin smoke), both with the VIIRS thermal anomalies drawn on top, from the last daytime
-  overpass GIBS can serve (about 13:30 local solar time, served about 3 hours later; a night observation gets the
+  overpass GIBS can serve (about 13:30 local solar time, taken as served 4 hours later; a night observation gets the
   afternoon before it, and `hours_before_observation` says how long before). It also asks Open-Meteo for the wind,
   humidity and last 24 hours of rain at the hot pixel. Images and weather go to the model with the payload; the model
   reports `visual_evidence` (`smoke` and `burn_scar`: visible / not_visible / obscured / no_image, `image_date`,
-  `notes`). The backend stores the image URLs, so the operator sees the same pictures. Checks: a report that does not
-  name the image date, claims to see something without an image, or is missing although images were shown makes the
-  verification NEEDS_MANUAL_REVIEW, and so does CONFIRMED when clear imagery within 24 hours shows neither smoke nor
-  a burn scar. An image never confirms a fire on its own. The fetch (8 s, both at once) and the model run (44 s) fit
-  the operator's 60 s request. GIBS layer names follow its catalogue and could not be tested from the development
-  environment; check the first live verification's `imagery.errors`.
+  `notes`). The backend stores the image URLs, so the operator sees the same pictures. A picture that is not a JPEG
+  or PNG, or is so small it is one flat colour (no data yet), is left out and named in `imagery.errors`. The visual
+  report can only hold back a CONFIRMED (a REJECTED stays rejected, so it cannot become publishable): a report that
+  does not name the image date, says `no_image` for a view that was shown, claims to see something without an image,
+  or is missing although images were shown makes it NEEDS_MANUAL_REVIEW, and so does a CONFIRMED when both views,
+  clear and within 24 hours, show neither smoke nor a burn scar although a confident hotspot was already there at
+  the pass (up to an hour after it). An image never confirms a fire on its own. Images and weather get 10 s of wall
+  clock together (whatever is late is left out), the model run 44 s: both fit the operator's 60 s request. GIBS
+  layer names follow its catalogue and could not be tested from the development environment; check the first live
+  verification's `imagery.errors`.
 - Operators publish or reject each verification with `POST /api/v1/operator/regions/{id}/decision`
   (`verification_id`, plus `caption` or `reason`). Publishing reuses the notification engine: one alert per
   verification, `purpose=emergency`, one message per linked Telegram group. A REJECTED verification

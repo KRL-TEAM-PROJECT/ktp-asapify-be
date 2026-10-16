@@ -31,6 +31,7 @@ RH = {"source": power.SOURCE, "parameter": "relative_humidity", "measurement_typ
 DRY_HOURS = 24             # the dryness of a region is the mean dry_z of its last 24 published hours
 DRY_SIGMA_FLOOR = 3.0      # %; a very steady humidity normal must not turn a small difference into a huge z
 MIN_SAMPLES = 30           # baselines thinner than this give no anomaly (as canonical.anomaly)
+SUMMARY_VERSION = 2        # the `power` summary with dry_z and rh_normal; a pass with an older one is redone
 
 Fetch = Callable[[float, float, date, date], dict]
 
@@ -168,16 +169,18 @@ def power_records(recent: list[Observation], table: dict, after: datetime | None
 
 def power_summary(records: list[dict], table: dict, now: datetime) -> dict:
     """The region's `power`: the latest hour, the mean dryness of the last DRY_HOURS hours, and that day's humidity
-    normal per UTC hour (the Open-Meteo fallback in geo.py measures against it)."""
+    normal per UTC hour (the Open-Meteo fallback in geo.py measures against it). `rh_normal` is two flat lists of 24,
+    mean and σ: Firestore stores no array inside an array."""
     latest = records[-1]
     end = parse(latest["observed_at"])
     zs = [r["inputs"]["dry_z"] for r in records
           if r["inputs"].get("dry_z") is not None and end - parse(r["observed_at"]) < timedelta(hours=DRY_HOURS)]
     entries_rh = table.get("entries_rh") or {}
     normal = [entries_rh.get(f"{end:%m%d}{h:02d}") for h in range(24)]
+    normal = [e if e and e[0] is not None and e[2] >= MIN_SAMPLES else None for e in normal]
     return {"observed_at": latest["observed_at"], **latest["inputs"],
             "dry_z": round(sum(zs) / len(zs), 3) if zs else None, "dry_z_hours": len(zs),
-            "rh_normal": [[e[0], e[1]] if e and e[0] is not None and e[2] >= MIN_SAMPLES else None for e in normal],
+            "rh_normal": {"mean": [e[0] if e else None for e in normal], "std": [e[1] if e else None for e in normal]},
             "updated_at": iso(now)}
 
 
@@ -190,8 +193,9 @@ def published_frontier(region: Region, now: datetime, fetch_power: Fetch) -> dat
 
 
 def _caught_up(doc: dict | None, frontier: datetime) -> bool:
-    observed = ((doc or {}).get("power") or {}).get("observed_at")
-    return bool(observed) and parse(observed) >= frontier
+    summary = (doc or {}).get("power") or {}
+    observed = summary.get("observed_at")   # a summary without rh_normal predates the dryness: rebuild it
+    return bool(observed) and parse(observed) >= frontier and isinstance(summary.get("rh_normal"), dict)
 
 
 # --- orchestration ----------------------------------------------------------------------------------------------
@@ -212,7 +216,7 @@ def process_region(repo: Repo, region: Region, last: str | None, now: datetime, 
     new = [r for r in records if after is None or parse(r["observed_at"]) > after]
     # 3) region document keeps the `power` summary; the status belongs to the satellites
     doc = {"id": region.id, "power_error": None}
-    if new:
+    if records:   # same write either way; refreshes a summary that has no new hours but an older shape
         doc["power"] = power_summary(records, table, now)
     repo.save_region(doc, [{**r, "processed_at": iso(now)} for r in new])
     return len(new)
@@ -249,7 +253,7 @@ def run_cycle(repo: Repo, regions: Iterable[Region], now: datetime | None = None
         summary["skipped"] = "power has no published hours"
         return summary
     summary["frontier"] = iso(frontier)
-    if meta.get("caught_up") == iso(frontier):
+    if meta.get("caught_up") == iso(frontier) and meta.get("summary") == SUMMARY_VERSION:
         summary["skipped"] = "no new hours since the last pass"
         return summary
     # 2) regions that are behind, least recently updated first, within the batch and the time budget
@@ -269,5 +273,5 @@ def run_cycle(repo: Repo, regions: Iterable[Region], now: datetime | None = None
         summary["regions"].append(region.id)
     # 3) remember the hour every region has caught up with
     if len(summary["regions"]) == len(behind):
-        repo.save_meta({"caught_up": iso(frontier), "updated_at": iso(now)})
+        repo.save_meta({"caught_up": iso(frontier), "summary": SUMMARY_VERSION, "updated_at": iso(now)})
     return summary

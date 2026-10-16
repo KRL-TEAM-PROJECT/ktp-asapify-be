@@ -4,7 +4,7 @@ Same data as the operator endpoints, minus who did what: operator emails and dec
 keeps only its action and time. There are no actions here (no agent run, no decision, no messages).
 
 Billing guardrail: every response is marked `public, s-maxage`, so Firebase Hosting's CDN answers repeat visits and
-public traffic barely reaches Firestore. A region's detail is limited to 24 hours (at most 144 slot reads); past days
+public traffic barely reaches Firestore. A region's detail is limited to 24 hours (about 96 slot reads); past days
 never change and are cached for a day.
 """
 from __future__ import annotations
