@@ -9,7 +9,8 @@ pointer to `/join`). It answers no questions.
 
 Status at the freeze (16 October 2026): live in `hack2skill-510921` (bot `@asapify_alert_bot`); published alerts
 reach the linked group. The group's invite link was not saved yet on 16 Oct (`GET /api/v1/telegram/join` returned
-`[]`), so the public join page shows no Join button until an operator does step 5 below.
+`[]`), so the public join page shows no Join button until an operator saves it (step 5 of "The Telegram group"
+below).
 
 ## Flow and guarantees
 

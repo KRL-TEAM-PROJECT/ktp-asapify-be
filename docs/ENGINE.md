@@ -133,8 +133,8 @@ freeze: treat every number as a hypothesis.
   ~50 s and 740 MB). With the downloads a tick takes roughly 25-35 s: 144 ticks a day is about 110-150k vCPU-seconds
   and 55-75k GiB-seconds a month, inside Cloud Run's monthly free tier (180k vCPU-s, 360k GiB-s) if the rest stays
   small. **In production 512 MiB was not always enough:** in the 24 hours to 16 Oct 2026 11:00 UTC, 17 of 144 geo
-  ticks returned 503 because the instance passed its memory limit (Cloud Run log "Memory limit ... exceeded"), and the
-  15 Oct day archive holds 86 of 144 slots. On 16 Oct the worker was raised to 1 GiB with
+  ticks returned 503 because the instance passed its memory limit (Cloud Run log "Memory limit ... exceeded"). On
+  16 Oct the worker was raised to 1 GiB with
   `gcloud run services update asapify-notify --memory 1Gi --region asia-southeast2 --project hack2skill-510921`
   (revision `asapify-notify-00021`; about 110-150k GiB-seconds a month, still inside the free tier). The deploy
   pipeline only swaps the image, so the setting stays.

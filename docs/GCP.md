@@ -126,7 +126,7 @@ for the worker, Cloud Tasks, the Telegram group, the Firestore index and cloud t
 4. Alerts cannot be closed early; they expire one hour after publishing. No historical decision snapshots.
 5. Not tested in the cloud: duplicate Cloud Tasks deliveries and a worker stopped after a claim (NOTIFICATIONS.md).
 6. The worker `asapify-notify` ran out of memory on about one geo tick in eight at 512 MiB; it was raised to 1 GiB
-   on 16 Oct (ENGINE.md, Cost and limits), but the archive keeps the earlier gaps.
+   on 16 Oct (ENGINE.md, Cost and limits). Ticks never backfill a skipped slot, so the day archive has gaps.
 7. Two Firestore indexes of the removed subscriber inbox (`notification_recipients`, `notification_inbox`) are still
    in the live database. Nothing queries them; they can be deleted.
 
