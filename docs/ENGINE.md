@@ -103,7 +103,7 @@ skipped and the day archive has gaps: smouldering peat changes over days, not mi
    machine. Humidity is cached per hour in meta;
    FIRMS is asked once, and only when some region has a hot pixel. One Firestore batch writes every state, slot
    record and transition, and the slot's entry in the day archive.
-5. A region that entered ALERT gets `last_agent_at` saved first (so the 6 h cooldown holds even if the agent fails)
+5. A region that entered ALERT gets `last_agent_at` saved first (so the 24 h cooldown holds even if the agent fails)
    and an agent request in `engine_meta/ingestion.agent_pending`. Requests run while at least 60 s of budget is left;
    the rest wait for the next cycle.
 

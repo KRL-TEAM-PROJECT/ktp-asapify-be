@@ -171,8 +171,10 @@ def test_agent_runs_on_entering_alert_and_respects_the_cooldown():
     assert not should_trigger_agent(alert, still, T0 + timedelta(hours=2))
     warning, _ = step(still, "r1", T0 + timedelta(hours=3), assess(4.5, 10.0))
     again, _ = step(warning, "r1", T0 + timedelta(hours=4), assess(9.0, 10.0))
-    assert not should_trigger_agent(warning, again, T0 + timedelta(hours=4))   # within 6 h
-    later, _ = step(warning, "r1", T0 + timedelta(hours=8), assess(9.0, 10.0))
-    assert should_trigger_agent(warning, later, T0 + timedelta(hours=8))
+    assert not should_trigger_agent(warning, again, T0 + timedelta(hours=4))   # within 24 h
+    still_cooling, _ = step(warning, "r1", T0 + timedelta(hours=24), assess(9.0, 10.0))
+    assert not should_trigger_agent(warning, still_cooling, T0 + timedelta(hours=24))   # 23 h after the last run
+    later, _ = step(warning, "r1", T0 + timedelta(hours=26), assess(9.0, 10.0))
+    assert should_trigger_agent(warning, later, T0 + timedelta(hours=26))
     short = RuleConfig(cooldown=timedelta(hours=1))
     assert should_trigger_agent(warning, again, T0 + timedelta(hours=4), short)   # the cooldown lives in RuleConfig
