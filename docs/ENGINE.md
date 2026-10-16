@@ -29,8 +29,7 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
 ## Breaking changes
 
 1. **Status names and order.** SAFE < WARNING < ALERT, plus NO_OBSERVABLE. WARNING is the middle level now; the
-   top level is ALERT. Compact codes stay `S`, `W`, `A`, `N`, so `A` means ALERT. The legacy pixel/cluster contract
-   follows: `warning_clusters` is `alert_clusters` and `warning_nights` is `alert_nights`.
+   top level is ALERT. Compact codes stay `S`, `W`, `A`, `N`, so `A` means ALERT.
 2. **Unit of observation.** A Himawari pixel (`h{row}_{col}`) became a peat region, one POWER grid cell of
    0.5° x 0.625°, with an id like `R2.50S113.750E` (centre latitude, then longitude). Every satellite pixel whose
    centre lies in the cell is scored; the ones on KHG peat are marked (`n_hot_peat`, `hot_on_peat`).

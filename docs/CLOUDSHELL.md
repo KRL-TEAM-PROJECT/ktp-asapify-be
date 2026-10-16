@@ -114,14 +114,11 @@ If the CLI is already authenticated or uses ADC, signing in again is not needed.
 never share authentication values. Fill `ktp-asapify-fe/.env.production.local` from that Web App:
 
 ```dotenv
-VITE_API_MODE=live
 VITE_API_BASE=
 VITE_FIREBASE_API_KEY=COPY_FROM_WEB_APP
 VITE_FIREBASE_AUTH_DOMAIN=hack2skill-510921.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=hack2skill-510921
 VITE_FIREBASE_APP_ID=COPY_FROM_WEB_APP
-VITE_FIREBASE_MESSAGING_SENDER_ID=950889990251
-VITE_PROVINCES_LAYER_URL=/mock/provinces.geojson
 ```
 
 Use the `authDomain` the Firebase config actually gives if it differs. The web configuration is a public identifier, not an Admin credential.
@@ -142,7 +139,7 @@ public invokers, stop and ask an admin to choose an access design; the runner ne
 Do not use this stage on an `asapify` database that another application uses with different rules. Hosting
 replaces the project's default site content with ASAPify; make sure that is the intended site. Review the plan first.
 
-On success, the runner checks HTTP for the home page, `/notifications`, health through the rewrite, and refusal of
+On success, the runner checks HTTP for the home page, `/join`, health through the rewrite, and refusal of
 anonymous operator access. Expected URL after success: `https://hack2skill-510921.web.app/join`.
 Do not call it live before the deployment and those checks pass.
 

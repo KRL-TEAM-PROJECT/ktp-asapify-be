@@ -23,7 +23,6 @@ There are no personal subscriptions, inboxes or push messages.
 | Risk engine | 65 peat regions, Himawari-9 + GK2A every 10 minutes (the two satellites confirm each other; ALERT only at night with both agreeing), VIIRS + NASA POWER as support, Fuzzy MAUT, state machine, audit record per slot, hot pixels and nearby VIIRS per region, a day archive for the map's date picker. See [ENGINE.md](docs/ENGINE.md) |
 | Himawari/GK2A decoding | In the engine (`asapify_engine/satellites.py`, satpy), checked against VIIRS on one night slot; the older `pipeline/` code was removed on 15 Oct and stays in git history ([ENGINE.md](docs/ENGINE.md) maps one to the other) |
 | ADK/Gemini agent | `geospatial_analyst` on Vertex AI with `fetch_firms_data` (NASA FIRMS): automatic on entering ALERT and the Re-verify button, YAML checked before it is stored, hard daily quota |
-| Alert list/close | Not implemented; endpoints return 503 and are not used by the UI yet |
 | Cloud tests with real Firebase/Firestore/Telegram | Google sign-in proven live; 401/403 and the private worker verified. Publish, Telegram and the operator flow not tested yet (no data, bot not installed) |
 
 The engine covers **Sumatra + Kalimantan**: 65 peat regions, one 10-minute slot each, grouped by WIB day.
