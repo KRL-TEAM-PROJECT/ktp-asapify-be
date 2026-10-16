@@ -50,7 +50,7 @@ class RuleConfig:
     sun_shift_k: float = 1.0                             # K; the most the sun raises the thresholds (sun overhead)
     cloud_max: float = 60.0                              # %; above this the region is NO_OBSERVABLE
     safety_margin: float = 0.05                          # utilities this close: take the more severe status
-    cooldown: timedelta = timedelta(hours=6)             # minimum gap between two automatic agent runs
+    cooldown: timedelta = timedelta(hours=24)            # minimum gap between two automatic agent runs
     # Supporting data (VIIRS, NASA POWER) join the ALERT utility only when they say something; see fusion.py
     support_weights: dict[str, float] = field(default_factory=lambda: {"viirs_support": 0.2, "power_support": 0.1})
 
