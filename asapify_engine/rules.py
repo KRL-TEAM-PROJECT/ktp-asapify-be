@@ -62,7 +62,7 @@ def _utility(memberships: dict[str, float], weights: dict[str, float]) -> float:
     return round(sum(w * memberships[k] for k, w in weights.items()) / sum(weights.values()), 4)
 
 
-def _valid(value: float | None, low: float = -inf, high: float = inf) -> float | None:
+def valid_input(value: float | None, low: float = -inf, high: float = inf) -> float | None:
     """None for a missing, non-finite or out-of-range input: it then counts as unavailable, never as a value."""
     return value if value is not None and isfinite(value) and low <= value <= high else None
 
@@ -78,7 +78,7 @@ def assess(delta_t: float | None, humidity: float | None, cloud: float | None,
     night-time view confirmed by both satellites. ALERT needs a high thermal anomaly: with delta_t_high at 0 its
     utility is 0, so dry air or supporting data alone never raise a region to ALERT.
     """
-    delta_t, cloud, humidity = _valid(delta_t), _valid(cloud, 0.0, 100.0), _valid(humidity, 0.0, 100.0)
+    delta_t, cloud, humidity = valid_input(delta_t), valid_input(cloud, 0.0, 100.0), valid_input(humidity, 0.0, 100.0)
     missing = [name for name, value in (("delta_t", delta_t), ("cloud_cover", cloud)) if value is None]
     if missing:
         return Assessment(Status.NO_OBSERVABLE, {}, {}, f"not observable: {', '.join(missing)} unavailable")
@@ -97,7 +97,7 @@ def assess(delta_t: float | None, humidity: float | None, cloud: float | None,
     weights = {s: {k: w for k, w in ws.items() if k in memberships} for s, ws in cfg.weights.items()}
     utilities = {status.value: _utility(memberships, ws) for status, ws in weights.items()}
     extra = {k: min(max(v, 0.0), 1.0) for k, v in (support or {}).items()
-             if k in cfg.support_weights and _valid(v) is not None}
+             if k in cfg.support_weights and valid_input(v) is not None}
     if extra:
         memberships.update(extra)
         boosted = _utility(memberships, {**weights[Status.ALERT], **{k: cfg.support_weights[k] for k in extra}})
