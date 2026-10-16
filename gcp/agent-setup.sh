@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time agent configuration for both Cloud Run services. The deploy pipeline only swaps the image, so these
 # settings stay. Prints the commands; APPLY=1 runs them.
-# Before: Gemini Enterprise Agent Platform (previously Vertex AI, API aiplatform.googleapis.com) enabled,
+# Before: Gemini Enterprise (API aiplatform.googleapis.com) enabled,
 # roles/aiplatform.user for asapify-api and asapify-notify, and secretAccessor on
 # firms-map-key for both (docs/ENGINE.md). The key itself never appears here: Cloud Run reads it from Secret Manager.
 set -euo pipefail
