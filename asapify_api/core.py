@@ -7,7 +7,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 UTC = timezone.utc
-PROVINCES = {11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 61, 62, 63, 64, 65}
 
 
 class ApiProblem(Exception):

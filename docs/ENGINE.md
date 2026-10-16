@@ -29,8 +29,7 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
 ## Breaking changes
 
 1. **Status names and order.** SAFE < WARNING < ALERT, plus NO_OBSERVABLE. WARNING is the middle level now; the
-   top level is ALERT. Compact codes stay `S`, `W`, `A`, `N`, so `A` means ALERT. The legacy pixel/cluster contract
-   follows: `warning_clusters` is `alert_clusters` and `warning_nights` is `alert_nights`.
+   top level is ALERT. Compact codes stay `S`, `W`, `A`, `N`, so `A` means ALERT.
 2. **Unit of observation.** A Himawari pixel (`h{row}_{col}`) became a peat region, one POWER grid cell of
    0.5° x 0.625°, with an id like `R2.50S113.750E` (centre latitude, then longitude). Every satellite pixel whose
    centre lies in the cell is scored; the ones on KHG peat are marked (`n_hot_peat`, `hot_on_peat`).
@@ -41,7 +40,7 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    ΔBT anomaly is also ≥ 3 K. The 3.9 µm test is the MODIS/VIIRS T4 test: thin cirrus raises ΔBT by cooling 10.4 µm,
    a fire warms 3.9 µm. `delta_t_k` for the rules is the anomaly of the strongest fire-like pixel (0 when there is
    none), so a noisy background cannot reach WARNING on its own. Night streaks and a per-pixel history are not used
-   yet; they can join once enough slots are stored.
+   (left undone at the freeze, 16 October 2026).
 4. **Two satellites confirm each other** (`fusion.py`). Himawari-9 (140.7° E) and GK2A (128.2° E) see the same peat
    from different angles. Both hot within 8 km = confirmed; both quiet = confirmed quiet. In both cases ΔT is the
    smaller of the two, the size both satellites see. Otherwise they disagree: ΔT is the larger one, and the view is
@@ -55,11 +54,16 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    proof of no fire. POWER no longer sets any status; its hourly cycle stays and writes the region's `power` summary.
 7. **Other inputs.** Cloud comes from the satellites' own 10.4 µm channel (colder than 270 K = cloud top). Relative
    humidity is Open-Meteo's model value for the slot's hour (one request for all regions per hour); without it the
-   rules use the thermal input alone and say so in the reason.
-8. **Storage.** Firestore database `asapify`, see the top of `repo.py` for every collection. Slot records live in
+   rules use the thermal input alone and say so in the reason. A missing, non-finite or out-of-range input counts
+   as unavailable, never as a value: no ΔT or cloud is NO_OBSERVABLE, humidity outside 0-100 % is left out, and
+   supporting values are kept within 0-1.
+8. **ALERT needs heat.** Humidity and supporting data only weigh in when ΔT has a high membership: with
+   `delta_t_high` = 0 the ALERT utility is set to 0 and the reason says so. Before this, dry air (RH < 30 %) alone
+   gave ALERT 0.4 and, with ΔT around 1.5-1.9 K, won through the safety margin.
+9. **Storage.** Firestore database `asapify`, see the top of `repo.py` for every collection. Slot records live in
    `engine_regions/{id}/slots/{YYYYMMDDHHMM}`; POWER hours (support only) stay in `hours`; the map's day archive
    lives in `engine_days/{YYYY-MM-DD}` (below).
-9. **Agent output.** `status confirmed / uncertain / negative` became the design's YAML schema with English keys:
+10. **Agent output.** `status confirmed / uncertain / negative` became the design's YAML schema with English keys:
    `validation_status` (CONFIRMED / REJECTED / NEEDS_MANUAL_REVIEW), `confidence_score`, `analysis`,
    `supporting_data` and `draft_operator_alert`. The verdict still has no level field: the agent cannot change it.
 
@@ -119,8 +123,8 @@ strongest anomaly was R3.50S105.625E (South Sumatra): 39 K (Himawari) and 42 K (
 cell. Two choices come from this slot. The first version (ΔBT only, peat pixels only) had 6 of its 11 hot Himawari
 regions without any VIIRS fire nearby (thin cirrus); the 3.9 µm test removed all 6. Scoring the whole cell instead
 of the peat pixels alone then found 10 regions with a hot pixel next to a VIIRS fire instead of 4, because most fire pixels sat
-just outside the simplified KHG polygons. One slot is not a calibration: repeat with more nights and daytime slots
-before trusting any number.
+just outside the simplified KHG polygons. One slot is not a calibration, and this was the only one done before the
+freeze: treat every number as a hypothesis.
 
 ## Cost and limits (billing guardrails)
 

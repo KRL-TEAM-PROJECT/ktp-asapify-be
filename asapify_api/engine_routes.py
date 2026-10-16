@@ -150,7 +150,7 @@ def decision(region_id: RegionID, body: RegionDecision, actor=Depends(require_op
     alert = {"id": alert_id, "region_id": region_id, "verification_id": body.verification_id,
              "source_path": f"engine_regions/{region_id}/verifications/{body.verification_id}",
              "province": region.province, "caption": body.caption, "published_by": actor["email"],
-             "published_at": iso(now), "status": "active", "closed_at": None, "closed_by": None,
+             "published_at": iso(now), "status": "active",
              "notifications": result["notifications"], "purpose": "emergency",
              "expires_at": iso(now + timedelta(hours=1)), "fanout": "pending"} if publish else None
 

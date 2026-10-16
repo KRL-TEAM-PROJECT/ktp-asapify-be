@@ -38,9 +38,9 @@ def join(store=Depends(get_notification_store)):
 
 LINKED = 'Linked. ASAPify will post its peat-fire alerts in this group.'
 ALREADY = 'This group is linked. ASAPify posts its peat-fire alerts here.'
-BAD_CODE = ('This code is not valid or has expired. In ASAPify open Regions, Telegram groups, "Add the bot to a group", '
+BAD_CODE = ('This code is not valid or has expired. In ASAPify open Admin, Telegram groups, "Add the bot to a group", '
             'and send the new message here within 10 minutes.')
-NO_CODE = ('To link this group, send the message ASAPify shows under Regions, Telegram groups, "Add the bot to a group". '
+NO_CODE = ('To link this group, send the message ASAPify shows under Admin, Telegram groups, "Add the bot to a group". '
            'It looks like /start@<bot> <code>.')
 PRIVATE = 'I only post ASAPify peat-fire alerts in the alert group.'
 

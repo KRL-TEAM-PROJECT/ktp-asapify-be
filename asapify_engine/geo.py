@@ -20,7 +20,7 @@ from .fusion import MAX_VIIRS, SATELLITES, FusionConfig, Fused, fuse, solar_elev
 from .ingest import Repo, iso, parse, region_doc, state_from_doc, transition_doc
 from .models import Status
 from .regions import Region
-from .rules import Assessment, RuleConfig, assess
+from .rules import Assessment, RuleConfig, assess, valid_input
 
 FIRST = timedelta(minutes=10)   # nothing is on the bucket sooner: Himawari ~12 min, GK2A ~22-24 min after the scan
 WAIT = timedelta(minutes=40)    # a slot only one satellite published is processed once it is this old
@@ -72,6 +72,7 @@ def assess_slot(region: Region, views: dict[str, RegionThermal | None], slot: da
                 humidity: float | None, hotspots: Callable[[], list[dict]], power: dict | None,
                 cfg: RuleConfig = RuleConfig(), fusion: FusionConfig = FusionConfig()) -> tuple[Assessment, dict]:
     """One region, one slot -> the assessment and its audit record."""
+    humidity = valid_input(humidity, 0.0, 100.0)   # the record shows the humidity the rules used, or none
     elevation = solar_elevation_deg(slot, region.lat, region.lon)
     night = elevation < fusion.night_sun_elevation_deg
     hot = any(v is not None and v.n_hot > 0 for v in views.values())   # FIRMS is only asked when a hotspot may be

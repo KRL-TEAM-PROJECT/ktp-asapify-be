@@ -284,6 +284,16 @@ def test_humidity_is_asked_once_an_hour_and_is_optional():
     assert summary["statuses"] == {"SAFE": 3}
 
 
+@pytest.mark.parametrize("rh", [150.0, -5.0, math.nan])
+def test_the_record_shows_the_humidity_the_rules_used(rh):
+    """An invalid humidity is left out of the rules, so the audit record must not show it as an accepted input."""
+    repo = FakeRepo()
+    cycle(repo, {"himawari9": everywhere(), "gk2a": everywhere()}, rh=rh)
+    record = repo.docs[REGIONS[0].id]["latest"]
+    assert record["inputs"]["relative_humidity_pct"] is None and record["quality"]["relative_humidity"] == "MISSING"
+    assert "model_estimate" not in record["flags"] and "humidity unavailable" in record["reason"]
+
+
 def test_a_broken_satellite_leaves_the_other_one_and_nothing_is_invented_without_both():
     repo = FakeRepo()
     summary = cycle(repo, {"himawari9": everywhere(anomaly=9.0, hot=True), "gk2a": OSError("corrupt file")})

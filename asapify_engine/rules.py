@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from math import inf
+from math import inf, isfinite
 
 from .models import SEVERITY, Status
 
@@ -62,6 +62,11 @@ def _utility(memberships: dict[str, float], weights: dict[str, float]) -> float:
     return round(sum(w * memberships[k] for k, w in weights.items()) / sum(weights.values()), 4)
 
 
+def valid_input(value: float | None, low: float = -inf, high: float = inf) -> float | None:
+    """None for a missing, non-finite or out-of-range input: it then counts as unavailable, never as a value."""
+    return value if value is not None and isfinite(value) and low <= value <= high else None
+
+
 def assess(delta_t: float | None, humidity: float | None, cloud: float | None,
            cfg: RuleConfig = RuleConfig(), *, support: dict[str, float] | None = None,
            cap: str | None = None) -> Assessment:
@@ -70,8 +75,10 @@ def assess(delta_t: float | None, humidity: float | None, cloud: float | None,
     Without humidity the utilities use the thermal input alone (the reason says so). `support` (VIIRS / POWER) can
     only raise the ALERT utility: no hotspot in other data is not proof of no fire. `cap` is the explicit DEGRADED
     policy of design section 3.5: daytime or a single satellite may give WARNING at most, so ALERT always rests on a
-    night-time view confirmed by both satellites.
+    night-time view confirmed by both satellites. ALERT needs a high thermal anomaly: with delta_t_high at 0 its
+    utility is 0, so dry air or supporting data alone never raise a region to ALERT.
     """
+    delta_t, cloud, humidity = valid_input(delta_t), valid_input(cloud, 0.0, 100.0), valid_input(humidity, 0.0, 100.0)
     missing = [name for name, value in (("delta_t", delta_t), ("cloud_cover", cloud)) if value is None]
     if missing:
         return Assessment(Status.NO_OBSERVABLE, {}, {}, f"not observable: {', '.join(missing)} unavailable")
@@ -89,11 +96,15 @@ def assess(delta_t: float | None, humidity: float | None, cloud: float | None,
         memberships["humidity_low"] = trapezoid(humidity, cfg.humidity_low)
     weights = {s: {k: w for k, w in ws.items() if k in memberships} for s, ws in cfg.weights.items()}
     utilities = {status.value: _utility(memberships, ws) for status, ws in weights.items()}
-    extra = {k: v for k, v in (support or {}).items() if k in cfg.support_weights}
+    extra = {k: min(max(v, 0.0), 1.0) for k, v in (support or {}).items()
+             if k in cfg.support_weights and valid_input(v) is not None}
     if extra:
         memberships.update(extra)
         boosted = _utility(memberships, {**weights[Status.ALERT], **{k: cfg.support_weights[k] for k in extra}})
         utilities[Status.ALERT.value] = max(utilities[Status.ALERT.value], boosted)
+    gated = memberships["delta_t_high"] == 0 and utilities[Status.ALERT.value] > 0
+    if gated:
+        utilities[Status.ALERT.value] = 0.0
 
     ranked = sorted(weights, key=lambda s: (utilities[s.value], SEVERITY[s]), reverse=True)
     top, runner_up = ranked[0], ranked[1]
@@ -107,6 +118,8 @@ def assess(delta_t: float | None, humidity: float | None, cloud: float | None,
         reason = f"{top.value} has the highest utility ({utilities[top.value]:.3f})"
     if humidity is None:
         reason += "; humidity unavailable, thermal input only"
+    if gated:
+        reason += "; ALERT utility set to 0: no high thermal anomaly"
     if cap and chosen is Status.ALERT:
         chosen, reason = Status.WARNING, f"{reason}; capped at WARNING ({cap})"
     return Assessment(chosen, utilities, {k: round(v, 4) for k, v in memberships.items()}, reason)

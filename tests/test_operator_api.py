@@ -29,7 +29,7 @@ def test_health_without_credentials():
     assert r.status_code == 200 and r.json()["status"] == "ok"
 
 
-@pytest.mark.parametrize("path", ["regions", "days?month=2026-10", "agent", "access", "alerts"])
+@pytest.mark.parametrize("path", ["regions", "days?month=2026-10", "agent", "access"])
 def test_operator_reads_require_auth_before_data(path):
     r = client().get("/api/v1/operator/" + path)
     assert r.status_code == 401 and r.json()["error"]["code"] == "UNAUTHENTICATED"
@@ -65,3 +65,8 @@ def test_revocation_check_is_requested(monkeypatch):
                                   "operator/clusters"])
 def test_old_pixel_api_is_gone(path):
     assert client().get("/api/v1/" + path).status_code == 404
+
+
+def test_alert_list_and_close_stubs_are_gone():
+    assert client().get("/api/v1/operator/alerts").status_code == 404
+    assert client().post("/api/v1/operator/alerts/A-1/close").status_code == 404

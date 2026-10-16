@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from .access_routes import router as access_router
-from .auth import require_operator
 from .core import ApiProblem, iso, utc_now
 from .engine_routes import router as engine_router
 from .notification_routes import router as notification_router
@@ -53,21 +52,6 @@ async def unavailable(request, exc):
 def health():
     return {"status": "ok", "version": os.environ.get("ASAPIFY_VERSION", "0.1.0"), "time": iso(utc_now())}
 
-
-operator = APIRouter(prefix="/api/v1/operator", dependencies=[Depends(require_operator)])
-
-
-@operator.get("/alerts")
-def alerts():
-    raise ApiProblem(503, "INTEGRATION_NOT_READY", "Alert management is not available at this stage.")
-
-
-@operator.post("/alerts/{alert_id}/close")
-def close_alert(alert_id: str):
-    raise ApiProblem(503, "INTEGRATION_NOT_READY", "Closing alerts is not connected yet.")
-
-
-app.include_router(operator)
 
 app.include_router(engine_router)
 

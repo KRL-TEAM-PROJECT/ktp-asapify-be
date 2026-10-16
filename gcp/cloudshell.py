@@ -129,7 +129,7 @@ def hosting(deploy, frontend):
                 raise RuntimeError(f"Missing {tool}; see docs/CLOUDSHELL.md.")
         # All checks and the local build happen before API public exposure or Hosting changes.
         subprocess.run(["node", "-e", "const [a,b]=process.versions.node.split('.').map(Number); if(a<22||(a===22&&b<12)) process.exit(1)"], check=True)
-    build_env = {**os.environ, "VITE_API_MODE": "live", "VITE_API_BASE": ""}
+    build_env = {**os.environ, "VITE_API_BASE": ""}
     command(["npm", "ci"], apply=deploy.apply, cwd=frontend)
     check_config = """
 import { loadEnv } from 'vite';
@@ -152,14 +152,14 @@ console.log('Firebase public config present; real Google sign-in must still be t
     command(["firebase", "deploy", "--only=hosting", f"--project={PROJECT}", "--non-interactive"],
             apply=deploy.apply, cwd=frontend)
     if deploy.apply:
-        for path, expected in (("/", 200), ("/notifications", 200), ("/api/v1/health", 200),
+        for path, expected in (("/", 200), ("/join", 200), ("/api/v1/health", 200),
                                ("/api/v1/operator/regions", 401)):
             status, body = request(ORIGIN + path)
             if status != expected:
                 raise RuntimeError(f"Hosting {path}: expected {expected}, received {status}.")
             if path == "/api/v1/health" and json.loads(body).get("status") != "ok":
                 raise RuntimeError("Hosting API rewrite did not return API health JSON.")
-        print(f"Hosting HTTP checks passed: {ORIGIN}/notifications")
+        print(f"Hosting HTTP checks passed: {ORIGIN}")
         print("Next: test Google sign-in and verify the operator UID before granting the operator role.")
 
 
