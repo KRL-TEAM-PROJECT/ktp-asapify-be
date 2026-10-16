@@ -20,7 +20,7 @@ from .core import utc_now
 
 router = APIRouter(prefix='/api/v1/public')
 PRIVATE = {'requested_by', 'actor', 'by', 'published_by', 'operator_uid', 'email'}
-LIVE_S, PAST_S = 120, 86400   # CDN seconds: a new slot lands every 10 minutes; a past day is final
+LIVE_S, PAST_S = 120, 86400   # CDN seconds: a new slot lands every 15 minutes; a past day is final
 
 
 def redact(value):

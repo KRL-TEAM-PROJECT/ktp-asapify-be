@@ -20,7 +20,7 @@ To run every stage at once from the user's Cloud Shell account, see the
 
 The datastore.user role applies to the whole project, so use a project dedicated to ASAPify.
 The scripts create no service-account JSON key, no Owner/Editor runtime account, no member invitation,
-no new billing, VM or Redis. Cloud Scheduler drives the engine (`asapify-geo-tick` every 10 minutes,
+no new billing, VM or Redis. Cloud Scheduler drives the engine (`asapify-geo-tick` every 15 minutes,
 `asapify-engine-tick` every 15) and the notification sweep (every minute); see [ENGINE.md](ENGINE.md) and
 [NOTIFICATIONS.md](NOTIFICATIONS.md). The GCS data bucket is created but no code reads or writes it: the engine
 keeps everything in Firestore.
@@ -112,7 +112,7 @@ approved by an admin. Hosting deployment is described in the FE repository's `do
 
 ## 4. Connect data and notifications
 
-The engine writes its own data: Cloud Scheduler calls the worker's geo tick every 10 minutes
+The engine writes its own data: Cloud Scheduler calls the worker's geo tick every 15 minutes
 (`gcp/geo-setup.sh`, see [ENGINE.md](ENGINE.md)).
 
 The old inline Telegram path was replaced by a multi-channel outbox. Follow [NOTIFICATIONS.md](NOTIFICATIONS.md)
@@ -122,7 +122,8 @@ for the worker, Cloud Tasks, the Telegram group, the Firestore index and cloud t
 
 1. Scope stays Sumatra + Kalimantan (65 peat regions) with the night window of ENGINE.md.
 2. Thresholds are calibrated on one VIIRS night slot only; no night streaks or neighbour support.
-3. The agent's evidence is NASA FIRMS only (no imagery).
+3. The agent's visual check uses daytime GIBS imagery only (a night observation is checked against the afternoon
+   before it); the GIBS layer names were not tested before deployment.
 4. Alerts cannot be closed early; they expire one hour after publishing. No historical decision snapshots.
 5. Not tested in the cloud: duplicate Cloud Tasks deliveries and a worker stopped after a claim (NOTIFICATIONS.md).
 

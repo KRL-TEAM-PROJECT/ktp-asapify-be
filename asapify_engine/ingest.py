@@ -1,9 +1,12 @@
-"""NASA POWER supporting data: per region, the skin-temperature anomaly and humidity of every newly published hour.
+"""NASA POWER: the "normal" environment of each region, and the newest hours measured against it.
 
-POWER is reanalysis, 0.5 x 0.625 degrees and 2-3 days behind, so it no longer sets the status: Himawari-9 and GK2A do
-(geo.py). It supports them instead: fusion.py reads the latest `power` summary of a region whenever a satellite sees
-a possible hotspot there. Network access goes through injectable fetchers and storage through the Repo protocol, so the
-whole flow runs in tests without the internet or Firestore. Shared helpers for both cycles live here too.
+POWER is reanalysis, 0.5 x 0.625 degrees and 2-3 days behind, so it does not set the status: Himawari-9 and GK2A do
+(geo.py). Its five-year climatology per region, UTC hour and calendar window is the normal that the rules shift their
+curves by. Every newly published hour gets its skin-temperature anomaly and its dryness `dry_z` (how many σ the
+humidity is below that hour's normal); the region's `power` summary keeps the mean `dry_z` of the last 24 published
+hours and that day's humidity normal per hour, for the Open-Meteo fallback. Network access goes through injectable
+fetchers and storage through the Repo protocol, so the whole flow runs in tests without the internet or Firestore.
+Shared helpers for both cycles live here too.
 """
 from __future__ import annotations
 
@@ -24,6 +27,10 @@ WINDOW_DAYS = 15       # ± calendar days around the target date
 AHEAD_DAYS = 10        # the cached baseline table reaches this far ahead, so it is rebuilt about once a week
 SKIN = {"source": power.SOURCE, "parameter": "skin_temperature",
         "measurement_type": "earth_skin_temperature", "unit": "K"}
+RH = {"source": power.SOURCE, "parameter": "relative_humidity", "measurement_type": "relative_humidity_2m", "unit": "%"}
+DRY_HOURS = 24             # the dryness of a region is the mean dry_z of its last 24 published hours
+DRY_SIGMA_FLOOR = 3.0      # %; a very steady humidity normal must not turn a small difference into a huge z
+MIN_SAMPLES = 30           # baselines thinner than this give no anomaly (as canonical.anomaly)
 
 Fetch = Callable[[float, float, date, date], dict]
 
@@ -96,16 +103,19 @@ def baseline_table(history: list[Observation], first: date, last: date) -> dict[
 
 
 def refresh_baseline(region: Region, today: date, fetch_power: Fetch, now: datetime) -> dict:
+    """Skin temperature (`entries`) and humidity (`entries_rh`) normals; both come in the same POWER requests."""
     first, last = today - timedelta(days=RECENT_DAYS + 1), today + timedelta(days=AHEAD_DAYS)
     years = range(today.year - BASELINE_YEARS, today.year)
     history: list[Observation] = []
     for year in years:
         start = _same_day(first, year) - timedelta(days=WINDOW_DAYS)
         end = start + (last - first) + timedelta(days=2 * WINDOW_DAYS)
-        history += [o for o in power.canonicalize(fetch_power(region.lat, region.lon, start, end), now)
-                    if o.parameter == SKIN["parameter"]]
+        history += power.canonicalize(fetch_power(region.lat, region.lon, start, end), now)
+    skin = [o for o in history if o.parameter == SKIN["parameter"]]
+    humidity = [o for o in history if o.parameter == RH["parameter"]]
     return {"first": first.isoformat(), "last": last.isoformat(), "years": f"{years[0]}-{years[-1]}",
-            "window_days": WINDOW_DAYS, "entries": baseline_table(history, first, last), "built_at": iso(now)}
+            "window_days": WINDOW_DAYS, "entries": baseline_table(skin, first, last),
+            "entries_rh": baseline_table(humidity, first, last), "built_at": iso(now)}
 
 
 # --- supporting records -----------------------------------------------------------------------------------------
@@ -117,8 +127,17 @@ def _quality(obs: Observation | None) -> str:
     return obs.quality.value if obs is not None else "MISSING"
 
 
-def power_records(recent: list[Observation], table: dict, years: str, after: datetime | None) -> list[dict]:
-    """One record per hour POWER has published since `after`: skin temperature against its baseline, and humidity."""
+def dry_z(humidity: Observation | None, entry: list | None) -> float | None:
+    """How many σ the humidity is below its normal for that hour (positive = drier); same source as the baseline."""
+    mean, std, samples = entry or (None, None, 0)
+    if humidity is None or not humidity.usable or mean is None or samples < MIN_SAMPLES:
+        return None
+    return round((mean - humidity.value) / max(std or 0.0, DRY_SIGMA_FLOOR), 3)
+
+
+def power_records(recent: list[Observation], table: dict, after: datetime | None) -> list[dict]:
+    """One record per hour POWER has published since `after`: skin temperature and humidity against their normals."""
+    entries, entries_rh, years = table["entries"], table.get("entries_rh") or {}, table["years"]
     ts = {o.observed_at: o for o in recent if o.parameter == "skin_temperature"}
     rh = {o.observed_at: o for o in recent if o.parameter == "relative_humidity"}
     published = [t for t, o in ts.items() if o.usable]
@@ -127,21 +146,39 @@ def power_records(recent: list[Observation], table: dict, years: str, after: dat
     frontier = max(published)  # POWER fills hours it has not published yet; they wait for a later cycle
     records = []
     for t in sorted(t for t in ts if t <= frontier and (after is None or t > after)):
-        entry = table.get(f"{t:%m%d%H}", [None, None, 0])
+        entry = entries.get(f"{t:%m%d%H}", [None, None, 0])
         baseline = Baseline(**SKIN, mean=entry[0], std=entry[1], samples=entry[2],
                             description=f"UTC hour {t:%H}, ±{WINDOW_DAYS} days of {t:%m-%d}, years {years}")
         humidity = rh.get(t)
+        normal = entries_rh.get(f"{t:%m%d%H}")
         records.append({
             "observed_at": iso(t),
             "inputs": {"skin_temperature_k": _value(ts[t]), "baseline_k": baseline.mean,
                        "baseline_std_k": baseline.std, "baseline_samples": baseline.samples,
                        "baseline": baseline.description, "delta_t_k": anomaly(ts[t], baseline),
-                       "relative_humidity_pct": _value(humidity)},
+                       "relative_humidity_pct": _value(humidity),
+                       "rh_baseline_pct": normal[0] if normal else None,
+                       "rh_baseline_std_pct": normal[1] if normal else None, "dry_z": dry_z(humidity, normal)},
             "quality": {"skin_temperature": _quality(ts[t]), "relative_humidity": _quality(humidity)},
             "flags": sorted({f for o in (ts[t], humidity) if o is not None for f in o.quality_flags}),
             "sources": {"skin_temperature": power.SOURCE, "relative_humidity": power.SOURCE},
         })
     return records
+
+
+def power_summary(records: list[dict], table: dict, now: datetime) -> dict:
+    """The region's `power`: the latest hour, the mean dryness of the last DRY_HOURS hours, and that day's humidity
+    normal per UTC hour (the Open-Meteo fallback in geo.py measures against it)."""
+    latest = records[-1]
+    end = parse(latest["observed_at"])
+    zs = [r["inputs"]["dry_z"] for r in records
+          if r["inputs"].get("dry_z") is not None and end - parse(r["observed_at"]) < timedelta(hours=DRY_HOURS)]
+    entries_rh = table.get("entries_rh") or {}
+    normal = [entries_rh.get(f"{end:%m%d}{h:02d}") for h in range(24)]
+    return {"observed_at": latest["observed_at"], **latest["inputs"],
+            "dry_z": round(sum(zs) / len(zs), 3) if zs else None, "dry_z_hours": len(zs),
+            "rh_normal": [[e[0], e[1]] if e and e[0] is not None and e[2] >= MIN_SAMPLES else None for e in normal],
+            "updated_at": iso(now)}
 
 
 def published_frontier(region: Region, now: datetime, fetch_power: Fetch) -> datetime | None:
@@ -164,19 +201,21 @@ def process_region(repo: Repo, region: Region, last: str | None, now: datetime, 
     start = today - timedelta(days=RECENT_DAYS)
     # 1) baseline table, rebuilt only when the cached one no longer covers the recent window
     table = repo.get_baseline(region.id)
-    if not table or not (table["first"] <= start.isoformat() and today.isoformat() <= table["last"]):
+    if not table or "entries_rh" not in table or not (
+            table["first"] <= start.isoformat() and today.isoformat() <= table["last"]):
         table = refresh_baseline(region, today, fetch_power, now)
         repo.save_baseline(region.id, table)
-    # 2) recent canonical inputs -> one record per hour POWER has published since the last pass
+    # 2) recent canonical inputs -> one record per published hour; only the hours since the last pass are new
     recent = power.canonicalize(fetch_power(region.lat, region.lon, start, today), now)
-    records = power_records(recent, table["entries"], table["years"], parse(last) if last else None)
-    # 3) region document keeps only the latest hour as `power`; the status belongs to the satellites
+    records = power_records(recent, table, None)
+    after = parse(last) if last else None
+    new = [r for r in records if after is None or parse(r["observed_at"]) > after]
+    # 3) region document keeps the `power` summary; the status belongs to the satellites
     doc = {"id": region.id, "power_error": None}
-    if records:
-        latest = records[-1]
-        doc["power"] = {"observed_at": latest["observed_at"], **latest["inputs"], "updated_at": iso(now)}
-    repo.save_region(doc, [{**r, "processed_at": iso(now)} for r in records])
-    return len(records)
+    if new:
+        doc["power"] = power_summary(records, table, now)
+    repo.save_region(doc, [{**r, "processed_at": iso(now)} for r in new])
+    return len(new)
 
 
 def run_cycle(repo: Repo, regions: Iterable[Region], now: datetime | None = None, *, batch: int = 10,

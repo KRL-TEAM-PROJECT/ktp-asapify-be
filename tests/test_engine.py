@@ -63,108 +63,116 @@ def test_trapezoid_shapes():
     assert trapezoid(5.0, (6.0, 8.0, inf, inf)) == 0.0
 
 
-@pytest.mark.parametrize("delta_t, humidity, expected", [
-    (0.5, 80.0, Status.SAFE),
-    (4.5, 50.0, Status.WARNING),
-    (9.0, 25.0, Status.ALERT),
-])
-def test_assess_picks_the_dominant_status(delta_t, humidity, expected):
-    result = assess(delta_t, humidity, cloud=20.0)
+def statuses(**kw):
+    """Where the status changes along ΔT, in 0.01 K steps."""
+    out, prev = [], None
+    for i in range(0, 1201):
+        status = assess(i / 100, 10.0, **kw).status
+        if status is not prev:
+            out.append((i / 100, status))
+            prev = status
+    return out
+
+
+@pytest.mark.parametrize("delta_t, expected", [(0.5, Status.SAFE), (4.5, Status.WARNING), (9.0, Status.ALERT)])
+def test_assess_picks_the_dominant_status(delta_t, expected):
+    result = assess(delta_t, cloud=20.0)
     assert result.status is expected
     assert set(result.utilities) == {"SAFE", "WARNING", "ALERT"}
 
 
-def test_safety_margin_prefers_the_more_severe_status():
-    close = assess(2.0, 52.0, cloud=10.0)   # SAFE 0.54 vs WARNING 0.50
-    assert close.utilities["SAFE"] > close.utilities["WARNING"]
-    assert close.status is Status.WARNING and "safety margin" in close.reason
-    clear = assess(2.0, 60.0, cloud=10.0)   # SAFE 0.70 vs WARNING 0.50
-    assert clear.status is Status.SAFE
+def test_status_boundaries_follow_the_curves_and_the_safety_margin():
+    assert statuses() == [(0.0, Status.SAFE), (1.95, Status.WARNING), (6.95, Status.ALERT)]
+    close = assess(6.96, 10.0)   # WARNING 0.52 vs ALERT 0.48: within the margin
+    assert close.utilities["WARNING"] > close.utilities["ALERT"]
+    assert close.status is Status.ALERT and "safety margin" in close.reason
+
+
+def test_drier_air_lowers_both_thresholds_and_wetter_air_raises_them():
+    assert statuses(dry_z=2.5) == [(0.0, Status.SAFE), (1.11, Status.WARNING), (6.11, Status.ALERT)]
+    assert statuses(dry_z=-2.5) == [(0.0, Status.SAFE), (2.8, Status.WARNING), (7.8, Status.ALERT)]
+    assert assess(5.0, 10.0, dry_z=50).status is Status.WARNING   # the shift stops at 1 K: dry air cannot make ALERT
+
+
+def test_the_sun_raises_the_thresholds_by_day_only():
+    assert statuses(sun_elevation_deg=90) == [(0.0, Status.SAFE), (2.95, Status.WARNING), (7.95, Status.ALERT)]
+    assert statuses(sun_elevation_deg=-20) == statuses()
+    assert assess(7.5, 10.0, sun_elevation_deg=30).adjust["sun_shift_k"] == 0.5
+
+
+def test_reason_and_adjust_explain_the_shift():
+    result = assess(6.5, 10.0, dry_z=2.5, sun_elevation_deg=30)
+    assert result.adjust == {"delta_t_k": 6.5, "dry_z": 2.5, "rh_shift_k": 0.848, "sun_shift_k": 0.5,
+                             "delta_t_eff_k": 6.848}
+    assert "ΔT 6.50 K counted as 6.85 K (air 2.5σ drier than normal +0.85 K, sun -0.50 K)" in result.reason
+    plain = assess(6.5, 10.0)
+    assert plain.adjust["rh_shift_k"] == 0.0 and "no humidity anomaly" in plain.reason
+    assert set(plain.memberships) == {"delta_t_low", "delta_t_medium", "delta_t_high"}
 
 
 def test_no_observable_when_cloudy_or_inputs_missing():
-    assert assess(9.0, 25.0, cloud=75.0).status is Status.NO_OBSERVABLE
-    missing = assess(None, 25.0, cloud=10.0)
+    assert assess(9.0, cloud=75.0).status is Status.NO_OBSERVABLE
+    missing = assess(None, cloud=10.0)
     assert missing.status is Status.NO_OBSERVABLE and missing.utilities == {} and "delta_t" in missing.reason
 
 
-def test_humidity_is_optional_and_said_so():
-    dry_unknown = assess(9.0, None, cloud=10.0)
-    assert dry_unknown.status is Status.ALERT and dry_unknown.utilities["ALERT"] == 1.0
-    assert "humidity_low" not in dry_unknown.memberships and "humidity unavailable" in dry_unknown.reason
-
-
-def test_degraded_views_are_capped_at_warning():
-    capped = assess(9.0, 25.0, cloud=10.0, cap="daytime")
-    assert capped.status is Status.WARNING and capped.utilities["ALERT"] == 1.0
-    assert capped.reason.endswith("capped at WARNING (daytime)")
-    assert assess(0.5, 80.0, cloud=10.0, cap="daytime").status is Status.SAFE   # the cap only lowers ALERT
-
-
 def test_support_only_ever_raises_alert():
-    base = assess(9.0, 25.0, cloud=10.0)
-    weak = assess(9.0, 25.0, cloud=10.0, support={"viirs_support": 0.1})
-    assert weak.utilities["ALERT"] == base.utilities["ALERT"] == 1.0   # a weak support never dilutes ALERT
-    lifted = assess(6.8, 35.0, cloud=10.0, support={"viirs_support": 1.0, "power_support": 1.0})
-    assert lifted.utilities["ALERT"] == 0.5692 and lifted.status is Status.ALERT
-    assert assess(6.8, 35.0, cloud=10.0, support={"unknown": 1.0}).status is Status.WARNING
+    assert assess(6.9, 10.0).status is Status.WARNING
+    lifted = assess(6.9, 10.0, support={"viirs_support": 1.0, "power_support": 1.0})
+    assert lifted.utilities["ALERT"] == 0.5769 and lifted.status is Status.ALERT
+    weak = assess(9.0, 10.0, support={"viirs_support": 0.1})
+    assert weak.utilities["ALERT"] == 1.0   # a weak support never dilutes ALERT
+    assert assess(6.9, 10.0, support={"unknown": 1.0}).status is Status.WARNING
 
 
-@pytest.mark.parametrize("delta_t", [0.0, 1.5, 1.6, 1.75, 1.8, 1.9, 5.0])
-def test_alert_needs_a_high_thermal_anomaly(delta_t):
-    """Dry air or supporting data alone never give ALERT: without delta_t_high the ALERT utility is 0."""
-    dry = assess(delta_t, 25.0, cloud=10.0, support={"viirs_support": 1.0, "power_support": 1.0})
-    assert dry.memberships["delta_t_high"] == 0.0
-    assert dry.utilities["ALERT"] == 0.0 and dry.status is not Status.ALERT
-    assert "no high thermal anomaly" in dry.reason
-    assert "no high thermal anomaly" not in assess(0.5, 80.0, cloud=10.0).reason   # said only when it changed a value
-    assert assess(6.5, 25.0, cloud=10.0).utilities["ALERT"] > 0.4   # delta_t_high > 0: humidity counts again
+@pytest.mark.parametrize("delta_t", [0.0, 3.0, 5.0, 5.99])
+def test_support_cannot_create_alert_without_a_high_membership(delta_t):
+    result = assess(delta_t, 10.0, support={"viirs_support": 1.0, "power_support": 1.0})
+    assert result.utilities["ALERT"] == 0.0 and result.status is not Status.ALERT
 
 
 @pytest.mark.parametrize("delta_t, cloud", [(nan, 10.0), (inf, 10.0), (-inf, 10.0), (9.0, nan), (9.0, -1.0),
                                             (9.0, 101.0)])
 def test_invalid_thermal_or_cloud_is_not_observable(delta_t, cloud):
-    result = assess(delta_t, 25.0, cloud=cloud)
+    result = assess(delta_t, cloud=cloud)
     assert result.status is Status.NO_OBSERVABLE and result.utilities == {}
 
 
-@pytest.mark.parametrize("humidity", [nan, inf, -10.0, 150.0])
-def test_invalid_humidity_counts_as_unavailable(humidity):
-    result = assess(9.0, humidity, cloud=10.0)
-    assert result.status is Status.ALERT and result.utilities["ALERT"] == 1.0
-    assert "humidity_low" not in result.memberships and "humidity unavailable" in result.reason
+@pytest.mark.parametrize("bad", [nan, inf, -inf])
+def test_invalid_dryness_or_sun_moves_nothing(bad):
+    assert assess(6.5, 10.0, dry_z=bad).adjust == assess(6.5, 10.0).adjust
+    assert assess(6.5, 10.0, sun_elevation_deg=bad).adjust == assess(6.5, 10.0).adjust
 
 
 def test_support_is_finite_and_at_most_one():
-    full = assess(6.8, 35.0, cloud=10.0, support={"viirs_support": 1.0})
-    assert assess(6.8, 35.0, cloud=10.0, support={"viirs_support": 5.0}).utilities == full.utilities
-    without = assess(6.8, 35.0, cloud=10.0)
-    assert assess(6.8, 35.0, cloud=10.0, support={"viirs_support": nan}).utilities == without.utilities
-    assert "viirs_support" not in assess(6.8, 35.0, cloud=10.0, support={"viirs_support": nan}).memberships
+    full = assess(6.9, 10.0, support={"viirs_support": 1.0})
+    assert assess(6.9, 10.0, support={"viirs_support": 5.0}).utilities == full.utilities
+    assert assess(6.9, 10.0, support={"viirs_support": nan}).utilities == assess(6.9, 10.0).utilities
+    assert "viirs_support" not in assess(6.9, 10.0, support={"viirs_support": nan}).memberships
 
 
 # ---------- state machine ----------
 
 def test_fsm_records_only_changes_and_ignores_old_observations():
-    first, t1 = step(None, "r1", T0, assess(0.5, 80.0, 10.0))
+    first, t1 = step(None, "r1", T0, assess(0.5, 10.0))
     assert t1.previous is None and t1.current is Status.SAFE
-    same, t2 = step(first, "r1", T0 + timedelta(hours=1), assess(0.4, 82.0, 10.0))
+    same, t2 = step(first, "r1", T0 + timedelta(hours=1), assess(0.4, 10.0))
     assert t2 is None and same.since == T0
-    stale, t3 = step(same, "r1", T0, assess(9.0, 25.0, 10.0))
+    stale, t3 = step(same, "r1", T0, assess(9.0, 10.0))
     assert t3 is None and stale is same
 
 
 def test_agent_runs_on_entering_alert_and_respects_the_cooldown():
-    safe, _ = step(None, "r1", T0, assess(0.5, 80.0, 10.0))
-    alert, change = step(safe, "r1", T0 + timedelta(hours=1), assess(9.0, 25.0, 10.0))
+    safe, _ = step(None, "r1", T0, assess(0.5, 10.0))
+    alert, change = step(safe, "r1", T0 + timedelta(hours=1), assess(9.0, 10.0))
     assert change.current is Status.ALERT and should_trigger_agent(safe, alert, T0 + timedelta(hours=1))
     alert = mark_agent_called(alert, T0 + timedelta(hours=1))
-    still, _ = step(alert, "r1", T0 + timedelta(hours=2), assess(9.5, 24.0, 10.0))
+    still, _ = step(alert, "r1", T0 + timedelta(hours=2), assess(9.5, 10.0))
     assert not should_trigger_agent(alert, still, T0 + timedelta(hours=2))
-    warning, _ = step(still, "r1", T0 + timedelta(hours=3), assess(4.5, 50.0, 10.0))
-    again, _ = step(warning, "r1", T0 + timedelta(hours=4), assess(9.0, 25.0, 10.0))
+    warning, _ = step(still, "r1", T0 + timedelta(hours=3), assess(4.5, 10.0))
+    again, _ = step(warning, "r1", T0 + timedelta(hours=4), assess(9.0, 10.0))
     assert not should_trigger_agent(warning, again, T0 + timedelta(hours=4))   # within 6 h
-    later, _ = step(warning, "r1", T0 + timedelta(hours=8), assess(9.0, 25.0, 10.0))
+    later, _ = step(warning, "r1", T0 + timedelta(hours=8), assess(9.0, 10.0))
     assert should_trigger_agent(warning, later, T0 + timedelta(hours=8))
     short = RuleConfig(cooldown=timedelta(hours=1))
     assert should_trigger_agent(warning, again, T0 + timedelta(hours=4), short)   # the cooldown lives in RuleConfig

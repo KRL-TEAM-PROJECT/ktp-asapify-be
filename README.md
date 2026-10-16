@@ -23,12 +23,13 @@ There are no personal subscriptions, inboxes or push messages.
 | Operator decision | Firestore transaction: decision, alert reservation, audit; a second decision is refused |
 | Telegram | The bot posts every published alert in the team's Telegram group(s); an operator links a group from the Admin page. No personal chats. Live: published alerts reach the linked group |
 | Cloud Run + GCS + Firestore + Artifact Registry | Live in `hack2skill-510921` since 9 Oct. Every merge to `main` that touches the API is tested and deployed by GitHub Actions (see [CLOUDSHELL.md](docs/CLOUDSHELL.md)). Firestore rules released 13 Oct (no direct browser access) |
-| Risk engine | Live: 65 peat regions, Himawari-9 + GK2A every 10 minutes (the two satellites confirm each other; ALERT only at night with both agreeing and with a high ΔT), VIIRS + NASA POWER as support, Fuzzy MAUT, state machine, audit record per slot, hot pixels and nearby VIIRS per region, a day archive for the map's date picker. See [ENGINE.md](docs/ENGINE.md) |
+| Risk engine | Live: 65 peat regions, Himawari-9 + GK2A every 15 minutes (each satellite backs the other up; ΔT weighted by clear view), fuzzy curves shifted by the air's dryness against its NASA POWER normal and by the sun, VIIRS + NASA POWER as support, state machine, audit record per slot, hot pixels and nearby VIIRS per region, a day archive for the map's date picker. See [ENGINE.md](docs/ENGINE.md) |
 | Himawari/GK2A decoding | In the engine (`asapify_engine/satellites.py`, satpy), checked against VIIRS on one night slot; the older `pipeline/` code was removed on 15 Oct and stays in git history ([ENGINE.md](docs/ENGINE.md) maps one to the other) |
-| ADK/Gemini agent | `geospatial_analyst` on Vertex AI with `fetch_firms_data` (NASA FIRMS): automatic on entering ALERT and the Re-verify button, YAML checked before it is stored, hard daily quota |
+| ADK/Gemini agent | `geospatial_analyst` on Vertex AI with `fetch_firms_data` (NASA FIRMS) and a visual check of two NASA GIBS images plus the weather at the hot pixel: automatic on entering ALERT and the Re-verify button, YAML checked before it is stored, hard daily quota |
 | Cloud tests with real Firebase/Firestore/Telegram | Proven live: Google sign-in, 401/403, the private worker, satellite data on the map, and an operator publishing an alert that reached the Telegram group |
 
-The engine covers **Sumatra + Kalimantan**: 65 peat regions, one 10-minute slot each, grouped by WIB day.
+The engine covers **Sumatra + Kalimantan**: 65 peat regions; the satellites scan every 10 minutes and the engine rates
+one slot every 15, grouped by WIB day.
 
 Statuses are `SAFE` < `WARNING` < `ALERT`, plus `NO_OBSERVABLE` (compact codes `S`, `W`, `A`, `N`).
 
@@ -40,9 +41,13 @@ Statuses are `SAFE` < `WARNING` < `ALERT`, plus `NO_OBSERVABLE` (compact codes `
 - **Not an operational early-warning system.** Latency and reach in the field were never measured; Telegram's
   `accepted` means the provider took the message, not that anyone read it, and delivery is not exactly-once.
 - **Scope.** Sumatra and Kalimantan only; night streaks, neighbour support and a per-pixel history are not used.
-- **History.** Slots stored before a rule change keep the result they had; nothing is recomputed (the ALERT
-  heat requirement applies from its deployment on).
-- **Agent.** NASA FIRMS hotspots are its only evidence (no imagery), with a hard quota of 20 runs a day.
+- **History.** Slots stored before a rule change keep the result they had; nothing is recomputed. The rules of
+  16 October (shifted curves, no day or single-satellite cap, 15-minute cycle) apply from their deployment on;
+  `tools/backtest_rules.py` shows how they would have rated the stored slots.
+- **Agent.** NASA FIRMS hotspots plus daytime GIBS imagery (a night observation is checked against the afternoon
+  before it), with a hard quota of 20 runs a day. Images never confirm a fire on their own.
+- **Dryness.** NASA POWER is 2-3 days late; while it is older than 4 days, Open-Meteo is measured against POWER's
+  normal instead (two models, flagged in the record).
 
 ## Local
 

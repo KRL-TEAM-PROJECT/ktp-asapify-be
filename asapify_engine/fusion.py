@@ -1,9 +1,11 @@
 """Two geostationary views of the same peat -> one input for the rules engine.
 
-Himawari-9 (140.7 E) and GK2A (128.2 E) look at Sumatra and Kalimantan from different angles, so a hotspot both see
-at about the same place is confirmed, and one that only one satellite sees is not. VIIRS (NASA FIRMS) and NASA POWER are
-supporting data: the latest value near the hotspot can raise the utilities, never lower them, because no hotspot is not
-proof of no fire (design document section 8, rule 4). Pure computation, no I/O.
+Himawari-9 (140.7 E) and GK2A (128.2 E) look at Sumatra and Kalimantan from different angles and overlap on purpose:
+when one is under cloud, the other still sees. ΔT for the rules is the mean of the satellites that see the region,
+weighted by how much of the cell each sees clear, so both count when both see and neither decides alone. Whether
+they agree is recorded as quality and flags, for the record and the agent, not as a cap on the status. VIIRS (NASA
+FIRMS) and NASA POWER are supporting data: the latest value near the hotspot can raise the utilities, never lower
+them, because no hotspot is not proof of no fire (design document section 8, rule 4). Pure computation, no I/O.
 """
 from __future__ import annotations
 
@@ -28,14 +30,14 @@ class FusionConfig:
     viirs_km: tuple[float, float] = (2.0, 10.0)      # VIIRS support is full within 2 km and gone beyond 10 km
     viirs_hours: tuple[float, float] = (3.0, 12.0)   # ... and full within 3 h, gone beyond 12 h
     power_max_age_hours: float = 96.0       # POWER only supports with data at most 4 days old
-    power_delta_t_k: tuple[float, float] = (1.0, 3.0)  # POWER skin-temperature anomaly: no support at 1 K, full at 3 K
+    power_z: tuple[float, float] = (1.0, 3.0)  # POWER skin-temperature anomaly in σ of its normal: none at 1, full at 3
 
 
 @dataclass(frozen=True)
 class Fused:
     delta_t: float | None          # brightness-temperature anomaly the rules use (K); None = not observable
     cloud_pct: float               # share of the cell under cloud in the clearest view
-    quality: Quality               # ACCEPTED: night and both satellites agree; DEGRADED: daytime or one satellite
+    quality: Quality               # ACCEPTED: both satellites agree; DEGRADED: one satellite or they disagree
     flags: tuple[str, ...]
     support: dict[str, float]      # viirs_support / power_support, only at a possible hotspot and when they say something
     hot_lat: float | None
@@ -93,14 +95,15 @@ def viirs_near(hotspots: list[dict], points: list[tuple[float, float]], slot: da
 
 
 def power_support(power: dict | None, slot: datetime, cfg: FusionConfig) -> float | None:
-    """Latest NASA POWER skin-temperature anomaly of the region as supporting evidence; None when old or missing."""
-    if not power or power.get("delta_t_k") is None or not power.get("observed_at"):
+    """Latest NASA POWER skin-temperature anomaly of the region, in σ of its normal, as supporting evidence; None when
+    old or missing."""
+    if not power or power.get("delta_t_k") is None or not power.get("baseline_std_k") or not power.get("observed_at"):
         return None
     age = (slot - datetime.fromisoformat(power["observed_at"].replace("Z", "+00:00"))).total_seconds() / 3600
     if age > cfg.power_max_age_hours:
         return None
-    lo, hi = cfg.power_delta_t_k
-    value = min(1.0, max(0.0, (power["delta_t_k"] - lo) / (hi - lo)))
+    lo, hi = cfg.power_z
+    value = min(1.0, max(0.0, (power["delta_t_k"] / power["baseline_std_k"] - lo) / (hi - lo)))
     return round(value, 3) if value > 0 else None
 
 
@@ -116,24 +119,20 @@ def fuse(views: dict[str, RegionThermal | None], *, night: bool, slot: datetime,
     if not seen:
         return Fused(None, cloud_pct, Quality.REJECTED, tuple(flags + ["no_clear_view"]), {}, None, None)
 
-    # 2) mutual confirmation: both hot at about the same place, or both quiet
+    # 2) one ΔT from every satellite that sees: weighted by its clear share of the cell, so neither decides alone
     hot = {name: v for name, v in seen.items() if v.n_hot > 0}
+    clear = {name: 1 - v.cloud_fraction for name, v in seen.items()}
+    delta_t = sum(clear[name] * v.max_anomaly_k for name, v in seen.items()) / sum(clear.values())
     if len(seen) == 2:
         h, g = seen["himawari9"], seen["gk2a"]
-        if len(hot) == 2 and distance_km(h.hot_lat, h.hot_lon, g.hot_lat, g.hot_lon) <= cfg.agree_km:
-            delta_t, agree = min(h.max_anomaly_k, g.max_anomaly_k), True   # the size both satellites confirm
-            flags.append("two_satellites_agree")
-        elif len(hot) == 0:
-            delta_t, agree = min(h.max_anomaly_k, g.max_anomaly_k), True   # likewise: what both see
-            flags.append("two_satellites_quiet")
-        else:
-            delta_t, agree = max(h.max_anomaly_k, g.max_anomaly_k), False
-            flags.append("satellites_disagree")
+        agree = len(hot) == 0 or (
+            len(hot) == 2 and distance_km(h.hot_lat, h.hot_lon, g.hot_lat, g.hot_lon) <= cfg.agree_km)
+        flags.append("two_satellites_quiet" if not hot else "two_satellites_agree" if agree else "satellites_disagree")
     else:
-        (name, only), = seen.items()
-        delta_t, agree = only.max_anomaly_k, False
+        (name, _), = seen.items()
+        agree = False
         flags.append(f"single_satellite:{name}")
-    quality = Quality.ACCEPTED if night and agree else Quality.DEGRADED
+    quality = Quality.ACCEPTED if agree else Quality.DEGRADED
 
     # 3) where the strongest anomaly is; supporting data only count at a possible hotspot, never on a quiet region
     lead = max(hot.values() or seen.values(), key=lambda v: v.max_anomaly_k)

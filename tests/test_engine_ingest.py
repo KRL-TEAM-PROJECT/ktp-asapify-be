@@ -26,8 +26,9 @@ def hours(start, end):
         t += timedelta(hours=1)
 
 
-def power_fetch(recent_celsius, humidity, calls=None, frontier=FRONTIER):
-    """History years read 25 °C; the current year reads `recent_celsius`; hours after `frontier` are unpublished."""
+def power_fetch(recent_celsius, humidity, calls=None, frontier=FRONTIER, normal_humidity=None):
+    """History years read 25 °C and `normal_humidity` (default: `humidity`); the current year reads `recent_celsius`
+    and `humidity`; hours after `frontier` are unpublished."""
     def fetch(lat, lon, start, end):
         if calls is not None:
             calls.append((lat, start, end))
@@ -38,7 +39,7 @@ def power_fetch(recent_celsius, humidity, calls=None, frontier=FRONTIER):
                 ts[key] = rh[key] = -999.0
             else:
                 ts[key] = recent_celsius if t.year == NOW.year else 25.0
-                rh[key] = humidity
+                rh[key] = humidity if t.year == NOW.year or normal_humidity is None else normal_humidity
         return {"geometry": {"coordinates": [lon, lat, 10]}, "header": {"fill_value": -999.0, "sources": ["TEST"]},
                 "properties": {"parameter": {"TS": ts, "RH2M": rh}}}
     return fetch
@@ -154,6 +155,27 @@ def test_power_support_records_every_published_hour_and_rotates_regions():
     assert record["quality"] == {"skin_temperature": "ACCEPTED", "relative_humidity": "ACCEPTED"}
     assert "reanalysis_estimate" in record["flags"]
     assert tick(repo)["regions"][0] == REGIONS[2].id     # the never-processed region goes next
+
+
+def test_power_measures_its_newest_humidity_against_its_own_normal():
+    repo = FakeRepo()
+    run_cycle(repo, REGIONS, NOW, batch=1, fetch_power=power_fetch(25.5, 68.0, normal_humidity=80.0))
+    record = repo.hours[REGIONS[0].id][-1]["inputs"]
+    assert record["rh_baseline_pct"] == 80.0 and record["dry_z"] == 4.0    # (80 - 68) / the 3 % floor
+    summary = repo.docs[REGIONS[0].id]["power"]
+    assert summary["dry_z"] == 4.0 and summary["dry_z_hours"] == 24         # the last 24 published hours
+    assert len(summary["rh_normal"]) == 24 and summary["rh_normal"][18] == [80.0, 0.0]
+    assert "entries_rh" in repo.baselines[REGIONS[0].id]
+
+
+def test_an_old_baseline_without_humidity_is_rebuilt_once():
+    repo, calls = FakeRepo(), []
+    run_cycle(repo, REGIONS, NOW, batch=1, fetch_power=power_fetch(25.5, 80.0))
+    del repo.baselines[REGIONS[0].id]["entries_rh"]
+    repo.meta_doc.pop("caught_up", None)
+    repo.docs[REGIONS[0].id]["power"]["observed_at"] = "2026-10-10T00:00:00Z"   # behind again
+    run_cycle(repo, REGIONS[:1], NOW, batch=1, fetch_power=power_fetch(25.5, 80.0, calls))
+    assert "entries_rh" in repo.baselines[REGIONS[0].id] and len(calls) == 1 + 5 + 1   # probe, 5 years, recent
 
 
 def test_idle_cycles_cost_one_probe_and_new_hours_wake_the_next_pass():

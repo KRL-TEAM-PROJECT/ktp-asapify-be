@@ -13,7 +13,8 @@ The runner handles the API, worker, queue, indexes and the recovery scheduler, a
   "Image-only update" below. Mode stayed `dry_run`; Telegram and FCM stayed off.
 - 13 Oct: automatic deployment is active (see "Automatic deployment" below); first run deployed `gh-dfc52e1`.
   Firestore rules released (no direct browser access).
-- 16 Oct, freeze: the engine fills the map every 10 minutes, Telegram is live and published alerts reach the linked
+- 16 Oct, freeze: the engine fills the map every 15 minutes (rerun `gcp/geo-setup.sh` with `APPLY=1` after the
+  deploy that brings it), Telegram is live and published alerts reach the linked
   group. The GCS data bucket stays empty: no code uses it.
 
 ## 1. Open Cloud Shell and get the source
