@@ -11,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from .auth import require_operator
+from .auth import require_admin, require_operator
 from .core import ApiProblem
 from .notification_delivery import send
 from .notification_store import get_notification_store
@@ -104,12 +104,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
 
 
 @router.get('/api/v1/operator/telegram-groups')
-def telegram_groups(actor=Depends(require_operator), store=Depends(get_notification_store)):
+def telegram_groups(actor=Depends(require_admin), store=Depends(get_notification_store)):
     return store.groups()
 
 
 @router.post('/api/v1/operator/telegram-groups/link')
-def telegram_group_link(actor=Depends(require_operator), store=Depends(get_notification_store)):
+def telegram_group_link(actor=Depends(require_admin), store=Depends(get_notification_store)):
     username = bot_username()
     return {'url': f'https://t.me/{username}?startgroup={store.group_link(actor)}', 'expires_in_seconds': 600}
 
@@ -120,13 +120,13 @@ class Invite(BaseModel):
 
 
 @router.put('/api/v1/operator/telegram-groups/{group_id}')
-def telegram_group_invite(group_id: HexID, body: Invite, actor=Depends(require_operator),
+def telegram_group_invite(group_id: HexID, body: Invite, actor=Depends(require_admin),
                           store=Depends(get_notification_store)):
     return store.set_invite(group_id, body.invite_url)
 
 
 @router.delete('/api/v1/operator/telegram-groups/{group_id}')
-def telegram_group_unlink(group_id: HexID, actor=Depends(require_operator), store=Depends(get_notification_store)):
+def telegram_group_unlink(group_id: HexID, actor=Depends(require_admin), store=Depends(get_notification_store)):
     store.unlink_group(group_id)
     return {'unlinked': True}
 

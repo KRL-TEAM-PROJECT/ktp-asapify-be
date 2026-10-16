@@ -1,8 +1,8 @@
 """ADK agent: the Geospatial AI Analyst of the design document (sections 7-9).
 
 `adk web` or `adk run asapify_agent` load `root_agent` for local experiments (docs/ENGINE.md); the backend builds the
-same agent with build_agent() and runs it with hard limits in asapify_engine/verifier.py. Gemini runs on Vertex AI
-with the service account, so no API key is stored anywhere.
+same agent with build_agent() and runs it with hard limits in asapify_engine/verifier.py. Gemini runs on Gemini
+Enterprise with the service account, so no API key is stored anywhere.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from google.genai import types
 from asapify_engine.config import Settings
 from asapify_engine.verifier import MAX_OUTPUT_TOKENS, fetch_firms_data, limit_tool_calls
 
-os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")   # Cloud Run: Vertex AI with the service account
+os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")   # Cloud Run: Gemini Enterprise with the service account
 os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")     # Gemini is not served from asia-southeast2
 
 # No curly braces in here: ADK fills {name} placeholders in instructions from the session state.
@@ -81,7 +81,7 @@ draft_operator_alert:
 
 
 def build_agent(model: str | BaseLlm) -> Agent:
-    if isinstance(model, str):   # Vertex answers 429 under shared load: up to 2 retries after 2 s and 4 s
+    if isinstance(model, str):   # Gemini Enterprise answers 429 under shared load: up to 2 retries after 2 s and 4 s
         model = Gemini(model=model, retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2.0, max_delay=8.0))
     return Agent(
         model=model,

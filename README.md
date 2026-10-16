@@ -19,7 +19,7 @@ There are no personal subscriptions, inboxes or push messages.
 
 | Component | Status |
 |---|---|
-| FastAPI `/api/v1`: health, regions, day archive, agent, decisions, operator access, notifications | Implemented; reads the engine's Firestore documents. The pixel grid / night / cluster API (15 Oct) and the never-built alert list/close endpoints (16 Oct) were removed |
+| FastAPI `/api/v1`: health, regions, day archive, agent, decisions, operator access (plus CAPTCHA self-registration for the judging period, GCP.md), notifications | Implemented; reads the engine's Firestore documents. The pixel grid / night / cluster API (15 Oct) and the never-built alert list/close endpoints (16 Oct) were removed |
 | Authentication | Firebase ID token, verified email, custom claim `role=operator`; revocation checked |
 | Public read-only | `/api/v1/public/regions`, `/regions/{id}` (24 h at most), `/days`, `/days/{date}`: the map, region detail and day archive for everyone, without operator emails or decision notes, and without actions. Cached by the Hosting CDN (`s-maxage` 120 s, past days 1 day) so public traffic barely reaches Firestore |
 | Operator decision | Firestore transaction: decision, alert reservation, audit; a second decision is refused |
@@ -27,7 +27,7 @@ There are no personal subscriptions, inboxes or push messages.
 | Cloud Run + GCS + Firestore + Artifact Registry | Live in `hack2skill-510921` since 9 Oct. Every merge to `main` that touches the API is tested and deployed by GitHub Actions (see [CLOUDSHELL.md](docs/CLOUDSHELL.md)). Firestore rules released 13 Oct (no direct browser access) |
 | Risk engine | Live: 65 peat regions, Himawari-9 + GK2A every 15 minutes (each satellite backs the other up; ΔT weighted by clear view), fuzzy curves shifted by the air's dryness against its NASA POWER normal and by the sun, VIIRS + NASA POWER as support, state machine, audit record per slot, hot pixels and nearby VIIRS per region, a day archive for the map's date picker. See [ENGINE.md](docs/ENGINE.md) |
 | Himawari/GK2A decoding | In the engine (`asapify_engine/satellites.py`, satpy), checked against VIIRS on one night slot; the older `pipeline/` code was removed on 15 Oct and stays in git history ([ENGINE.md](docs/ENGINE.md) maps one to the other) |
-| ADK/Gemini agent | `geospatial_analyst` on Vertex AI with `fetch_firms_data` (NASA FIRMS) and a visual check of two NASA GIBS images plus the weather at the hot pixel: automatic on entering ALERT and the Re-verify button, YAML checked before it is stored, hard daily quota |
+| ADK/Gemini agent | `geospatial_analyst` on Gemini Enterprise with `fetch_firms_data` (NASA FIRMS) and a visual check of two NASA GIBS images plus the weather at the hot pixel: automatic on entering ALERT and the Re-verify button, YAML checked before it is stored, hard daily quota |
 | Cloud tests with real Firebase/Firestore/Telegram | Proven live: Google sign-in, 401/403, the private worker, satellite data on the map, and an operator publishing an alert that reached the Telegram group |
 
 The engine covers **Sumatra + Kalimantan**: 65 peat regions; the satellites scan every 10 minutes and the engine rates

@@ -21,9 +21,10 @@ class FakeAccounts:
         user = self.users.get(email)
         return None if user is None else {**user, "claims": dict(user["claims"])}
 
-    def set_role(self, uid, role):
+    def set_role(self, uid, role, signup_until=None):   # like FirebaseAccounts: other claims are kept
         user = next(u for u in self.users.values() if u["uid"] == uid)
-        user["claims"] = {k: v for k, v in user["claims"].items() if k != "role"} | ({"role": role} if role else {})
+        user["claims"] = ({k: v for k, v in user["claims"].items() if k not in ("role", "signup_until")}
+                          | ({"role": role} if role else {}) | ({"signup_until": signup_until} if role and signup_until else {}))
 
     def revoke(self, uid):
         self.revoked.append(uid)
@@ -148,3 +149,5 @@ def test_firebase_accounts_keep_every_other_claim(monkeypatch):
     assert saved == {"u1": {"team": "be"}}
     access_routes.FirebaseAccounts().set_role("u1", "operator")
     assert saved == {"u1": {"role": "operator", "team": "be"}}
+    access_routes.FirebaseAccounts().set_role("u1", "operator", signup_until="2026-10-31")
+    assert saved == {"u1": {"role": "operator", "team": "be", "signup_until": "2026-10-31"}}
