@@ -14,7 +14,8 @@ The runner handles the API, worker, queue, indexes and the recovery scheduler, a
 - 13 Oct: automatic deployment is active (see "Automatic deployment" below); first run deployed `gh-dfc52e1`.
   Firestore rules released (no direct browser access).
 - 16 Oct, freeze: the engine fills the map every 10 minutes, Telegram is live and published alerts reach the linked
-  group. The GCS data bucket stays empty: no code uses it.
+  group. The GCS data bucket stays empty: no code uses it. Both services run `gh-f40381a` (tag
+  `freeze-2026-10-16`). Artifact Registry keeps the latest 3 images and deletes older ones after 7 days.
 
 ## 1. Open Cloud Shell and get the source
 
@@ -47,7 +48,9 @@ Without `--apply`, the runner only prints the plan. With `--apply`, the runner:
 
 1. Checks the active account, the project and billing.
 2. Prepares resources and service accounts from `gcp/manage.py` and `gcp/notifications.py`.
-3. Adds the three missing Firestore indexes without deleting other indexes, then waits for READY.
+3. Adds the Firestore index listed in `gcp/firestore.indexes.json` (the outbox scan) if it is missing, without
+   deleting other indexes, then waits for READY. (The script's message still says "three": two indexes of the
+   removed subscriber inbox were dropped from that file.)
 4. Builds an image with a unique time tag, deploys the API and worker, and installs the recovery scheduler.
 5. Checks that both services are Ready with every test-mode flag, API health 200, operator access without a
    Firebase token 401, and anonymous worker access denied.

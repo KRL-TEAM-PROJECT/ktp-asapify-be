@@ -128,11 +128,16 @@ freeze: treat every number as a hypothesis.
 
 ## Cost and limits (billing guardrails)
 
-- **Cloud Run worker** (1 vCPU, 512 MiB, timeout 300 s): measured on one Linux vCPU with this slot, both satellites
+- **Cloud Run worker** (1 vCPU, 1 GiB since 16 Oct, timeout 300 s): measured on one Linux vCPU with this slot, both satellites
   decode in about 18-21 s CPU with a peak of about 200 MB (dask chunks of 4 MiB; with dask's 128 MiB default it was
   ~50 s and 740 MB). With the downloads a tick takes roughly 25-35 s: 144 ticks a day is about 110-150k vCPU-seconds
   and 55-75k GiB-seconds a month, inside Cloud Run's monthly free tier (180k vCPU-s, 360k GiB-s) if the rest stays
-  small. No memory change is needed.
+  small. **In production 512 MiB was not always enough:** in the 24 hours to 16 Oct 2026 11:00 UTC, 17 of 144 geo
+  ticks returned 503 because the instance passed its memory limit (Cloud Run log "Memory limit ... exceeded"). On
+  16 Oct the worker was raised to 1 GiB with
+  `gcloud run services update asapify-notify --memory 1Gi --region asia-southeast2 --project hack2skill-510921`
+  (revision `asapify-notify-00021`; about 110-150k GiB-seconds a month, still inside the free tier). The deploy
+  pipeline only swaps the image, so the setting stays.
 - **Downloads** come from NOAA's public buckets on AWS (no key, no egress fee); ingress to Cloud Run is free.
 - **Firestore** (`asapify` holds the project's free tier): about 65 slot records + 65 state updates per slot,
   ~19k writes a day, plus ~1.6k for POWER. That is around the free 20k writes a day, so expect cents a month.
