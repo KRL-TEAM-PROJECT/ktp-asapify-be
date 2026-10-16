@@ -74,8 +74,8 @@ def regions(repo=Depends(get_engine_repo)):
 @router.get("/api/v1/operator/regions/{region_id}", dependencies=[Depends(require_operator)])
 def region(region_id: RegionID, hours: int = Query(24, ge=1, le=72),
            day: str | None = Query(None, alias="date", pattern=DAY), repo=Depends(get_engine_repo)):
-    """State, the last `hours` of 10-minute slots (6 reads an hour, so at most 432) and POWER support; with `date`,
-    the slots of that WIB day instead (at most 144 reads)."""
+    """State, the slots of the last `hours` up to the latest one (4 reads an hour; at most 6 an hour, so 432) and
+    POWER support; with `date`, the slots of that WIB day instead (at most 144 reads)."""
     _region(region_id)
     detail = repo.region_detail(region_id, hours, day_window(_day(day)) if day else None)
     if detail is None:
@@ -185,7 +185,7 @@ def tick(batch: int = Query(10, ge=1, le=100), budget: int = Query(40, ge=5, le=
 
 @router.post("/_internal/engine/geo-tick", dependencies=[Depends(require_worker)])
 def geo_tick(budget: int = Query(240, ge=30, le=280), repo=Depends(get_engine_repo)):
-    """One Himawari-9 + GK2A slot for every region, every 10 minutes. `budget` (seconds) stays below the 300 s timeout."""
+    """One Himawari-9 + GK2A slot for every region, every 15 minutes. `budget` (seconds) stays below the 300 s timeout."""
     settings = Settings()
     verify = hotspots = None
     if settings.agent_ready:

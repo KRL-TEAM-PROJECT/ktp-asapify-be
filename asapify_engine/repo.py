@@ -23,7 +23,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 SUMMARY =("id", "validation_status", "confidence_score", "trigger", "at", "observed_at", "error")
 SLOT_RETENTION = timedelta(days=30)
-SLOTS_PER_HOUR = 6
+SCAN_SLOTS_PER_HOUR = 6     # the satellites scan every 10 minutes: the most slot records an hour can hold
 
 
 def _hour_id(observed_at: str) -> str:
@@ -103,16 +103,20 @@ class FirestoreRepo:
         return snap.to_dict() if snap.exists else None
 
     def region_detail(self, region_id: str, hours: int, window: tuple[str, str] | None = None) -> dict | None:
-        """State plus slot records (6 an hour) and POWER support, oldest first: the last `hours`, or the slots with
-        start <= observed_at < end when `window` is given (one day: at most 144 slot reads)."""
+        """State plus slot records and POWER support, oldest first: the `hours` up to the latest assessed slot (4 slots
+        an hour since the 15-minute cycle, 6 before), or the slots with start <= observed_at < end when `window` is
+        given (one day: at most 144 slot reads)."""
         ref = self.regions.document(region_id)
         snap = ref.get()
         if not snap.exists:
             return None
         desc = firestore.Query.DESCENDING
 
-        def latest(name: str, limit: int, field: str = "observed_at") -> list[dict]:
-            return [d.to_dict() for d in ref.collection(name).order_by(field, direction=desc).limit(limit).stream()]
+        def latest(name: str, limit: int, field: str = "observed_at", since: str | None = None) -> list[dict]:
+            q = ref.collection(name)
+            if since:   # a time bound, not only a count: the cycle no longer stores the same number of slots an hour
+                q = q.where(filter=FieldFilter(field, ">", since))
+            return [d.to_dict() for d in q.order_by(field, direction=desc).limit(limit).stream()]
 
         def within(name: str, limit: int, direction=firestore.Query.ASCENDING) -> list[dict]:
             q = (ref.collection(name).where(filter=FieldFilter("observed_at", ">=", window[0]))
@@ -120,10 +124,13 @@ class FirestoreRepo:
                  .order_by("observed_at", direction=direction).limit(limit))
             return [d.to_dict() for d in q.stream()]
         if window is None:
-            slots, power = latest("slots", hours * SLOTS_PER_HOUR)[::-1], latest("hours", hours)[::-1]
+            end = (snap.to_dict() or {}).get("observed_at")   # snapshot.get raises on a missing field
+            since = (datetime.fromisoformat(end.replace("Z", "+00:00")) - timedelta(hours=hours)).isoformat().replace(
+                "+00:00", "Z") if end else None
+            slots, power = latest("slots", hours * SCAN_SLOTS_PER_HOUR, since=since)[::-1], latest("hours", hours)[::-1]
             transitions = latest("transitions", 20)
         else:
-            slots, power = within("slots", 24 * SLOTS_PER_HOUR), within("hours", 24)
+            slots, power = within("slots", 24 * SCAN_SLOTS_PER_HOUR), within("hours", 24)
             transitions = within("transitions", 20, desc)
         return {**snap.to_dict(), "slots": [{k: v for k, v in s.items() if k != "expire_at"} for s in slots],
                 "hours": power, "transitions": transitions, "verifications": latest("verifications", 10, "at")}

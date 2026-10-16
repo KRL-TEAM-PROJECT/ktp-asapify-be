@@ -16,6 +16,8 @@ The runner handles the API, worker, queue, indexes and the recovery scheduler, a
 - 16 Oct, freeze: the engine fills the map every 10 minutes, Telegram is live and published alerts reach the linked
   group. The GCS data bucket stays empty: no code uses it. Both services run `gh-f40381a` (tag
   `freeze-2026-10-16`). Artifact Registry keeps the latest 3 images and deletes older ones after 7 days.
+- After the freeze tag (16 Oct): adaptive fuzzy curves, the visual check and a 15-minute cycle. After the deploy
+  that brings them, rerun `gcp/geo-setup.sh` with `APPLY=1` so the geo tick runs every 15 minutes.
 
 ## 1. Open Cloud Shell and get the source
 

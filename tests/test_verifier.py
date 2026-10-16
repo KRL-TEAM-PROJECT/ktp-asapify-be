@@ -41,7 +41,7 @@ TOOL = {"hours_window": 24, "buffer_km": 10.0, "hotspot_count": 2, "confident_co
 
 
 def fake_run(text, results, region=REGION):
-    def run(payload, state, settings):
+    def run(payload, state, settings, pictures=()):
         assert region.id in payload and state["region"]["id"] == region.id and state["tool_calls"] == 0
         return text, results, {"model_calls": 2}
     return run
@@ -97,7 +97,7 @@ def test_confirmed_needs_a_nominal_or_high_confidence_hotspot():
 @pytest.mark.parametrize("failure, code", [(TimeoutError(), "AGENT_TIMEOUT"),
                                            (RuntimeError("boom"), "AGENT_ERROR:RuntimeError")])
 def test_agent_failures_become_manual_review_records(failure, code):
-    def run(payload, state, settings):
+    def run(payload, state, settings, pictures=()):
         raise failure
     record = analyze(run)
     assert record["validation_status"] == "NEEDS_MANUAL_REVIEW" and record["error"] == code
@@ -234,3 +234,30 @@ def test_adk_loop_runs_the_tool_and_returns_the_final_yaml(monkeypatch):
     assert record["error"] is None, record["raw_output"]
     assert record["validation_status"] == "CONFIRMED" and record["tool_calls"][0]["hotspot_count"] == 1
     assert record["usage"]["model_calls"] == 2 and record["usage"]["prompt_tokens"] == 200
+
+
+def test_the_images_reach_the_model_through_the_real_adk_runner(monkeypatch):
+    """Same scripted model; the GIBS image must be an inline part of the request the model receives."""
+    from google.adk.models import BaseLlm, LlmResponse
+    from google.genai import types
+
+    import asapify_agent.agent as agent_module
+    from asapify_engine import imagery
+
+    images = []
+
+    class ScriptedLlm(BaseLlm):
+        model: str = "scripted"
+
+        async def generate_content_async(self, llm_request, stream=False) -> AsyncGenerator[LlmResponse, None]:
+            images.extend(p.inline_data.mime_type for c in llm_request.contents for p in (c.parts or [])
+                          if p.inline_data)
+            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text="NOT YAML")]))
+
+    real_build = agent_module.build_agent
+    monkeypatch.setattr(agent_module, "build_agent", lambda model: real_build(ScriptedLlm()))
+    picture = imagery.Picture("true_color", "a,b", "https://gibs.example/t.jpg", "image/jpeg", b"\xff\xd8")
+    shown = {"date": "2026-10-09", "hours_before_observation": 16.0, "pictures": [picture], "errors": []}
+    record = verifier.analyze_region(REGION, RECORD, NOW, trigger="auto", settings=SETTINGS,
+                                     look=lambda *a: shown, weather=lambda *a: {"at": None})
+    assert images and images[0] == "image/jpeg" and record["error"] == "INVALID_OUTPUT"

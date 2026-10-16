@@ -123,18 +123,28 @@ def test_both_satellites_hot_at_the_same_place_confirm_each_other():
     fused = fuse({"himawari9": view(9.0, True, lat=-1.0, lon=113.75), "gk2a": view(7.5, True, lat=-1.03, lon=113.77)},
                  night=True, slot=NIGHT, centre=CENTRE)
     assert fused.quality is Quality.ACCEPTED and "two_satellites_agree" in fused.flags
-    assert fused.delta_t == 7.5 and fused.cloud_pct == 10.0          # the size both confirm; the best view's cloud
+    assert fused.delta_t == 8.25 and fused.cloud_pct == 10.0          # both count equally; the best view's cloud
 
 
-@pytest.mark.parametrize("views, night, flag", [
-    ({"himawari9": view(9.0, True), "gk2a": view(8.0, True, lat=-1.5)}, True, "satellites_disagree"),   # 55 km apart
-    ({"himawari9": view(9.0, True), "gk2a": view(1.0)}, True, "satellites_disagree"),
-    ({"himawari9": None, "gk2a": view(9.0, True)}, True, "single_satellite:gk2a"),
-    ({"himawari9": view(9.0, True), "gk2a": view(9.0, True)}, False, "daytime"),
+def test_each_satellite_counts_by_how_much_of_the_cell_it_sees_clear():
+    fused = fuse({"himawari9": view(9.0, True, cloud=0.1), "gk2a": view(3.0, True, cloud=0.55)},
+                 night=True, slot=NIGHT, centre=CENTRE)
+    assert fused.delta_t == 7.0   # (0.9 x 9 + 0.45 x 3) / 1.35: the clearer view weighs more, neither decides alone
+
+
+@pytest.mark.parametrize("views, flag, delta_t", [
+    ({"himawari9": view(9.0, True), "gk2a": view(8.0, True, lat=-1.5)}, "satellites_disagree", 8.5),   # 55 km apart
+    ({"himawari9": view(9.0, True), "gk2a": view(1.0)}, "satellites_disagree", 5.0),
+    ({"himawari9": None, "gk2a": view(9.0, True)}, "single_satellite:gk2a", 9.0),   # one under cloud: the other sees
 ])
-def test_one_satellite_disagreement_or_daylight_degrade_the_view(views, night, flag):
-    fused = fuse(views, night=night, slot=NIGHT, centre=CENTRE)
-    assert fused.quality is Quality.DEGRADED and flag in fused.flags and fused.delta_t == 9.0
+def test_one_satellite_or_disagreement_is_recorded_not_capped(views, flag, delta_t):
+    fused = fuse(views, night=True, slot=NIGHT, centre=CENTRE)
+    assert fused.quality is Quality.DEGRADED and flag in fused.flags and fused.delta_t == delta_t
+
+
+def test_daytime_is_a_flag_not_a_lower_quality():
+    fused = fuse({"himawari9": view(9.0, True), "gk2a": view(9.0, True)}, night=False, slot=DAY, centre=CENTRE)
+    assert fused.quality is Quality.ACCEPTED and "daytime" in fused.flags and fused.delta_t == 9.0
 
 
 def test_no_clear_view_is_rejected():
@@ -154,8 +164,10 @@ def test_viirs_and_power_support_only_a_possible_hotspot():
     assert viirs_support([hotspot(1.0, 1.0)], -1.0, 113.75, NIGHT, cfg) == 1.0
     assert viirs_support([hotspot(6.0, 1.0)], -1.0, 113.75, NIGHT, cfg) == 0.5
     assert viirs_support([hotspot(1.0, 1.0, "l"), hotspot(20.0)], -1.0, 113.75, NIGHT, cfg) is None
-    recent = {"observed_at": "2026-10-09T18:00:00Z", "delta_t_k": 2.0}
-    assert power_support(recent, NIGHT, cfg) == 0.5
+    recent = {"observed_at": "2026-10-09T18:00:00Z", "delta_t_k": 2.0, "baseline_std_k": 1.0}
+    assert power_support(recent, NIGHT, cfg) == 0.5                                                # 2σ above normal
+    assert power_support({**recent, "baseline_std_k": 0.5}, NIGHT, cfg) == 1.0                      # 4σ
+    assert power_support({**recent, "baseline_std_k": None}, NIGHT, cfg) is None                    # no normal
     assert power_support({**recent, "observed_at": "2026-10-06T18:00:00Z"}, NIGHT, cfg) is None   # older than 4 days
     hot = fuse({"himawari9": view(9.0, True), "gk2a": view(8.0, True)}, night=True, slot=NIGHT, centre=CENTRE,
                hotspots=[hotspot(1.0, 1.0)], power=recent)
@@ -213,7 +225,7 @@ def test_night_hotspot_both_satellites_see_enters_alert_and_requests_the_agent()
     assert doc["status"] == "ALERT" and doc["observed_at"] == "2026-10-11T18:10:00Z"
     assert doc["last_agent_at"] == "2026-10-11T18:20:00Z" and repo.meta_doc["geo_slot"] == "2026-10-11T18:10:00Z"
     record = repo.slots[rid][-1]
-    assert record == doc["latest"] and record["night"] is True and record["inputs"]["delta_t_k"] == 8.5
+    assert record == doc["latest"] and record["night"] is True and record["inputs"]["delta_t_k"] == 8.75
     assert record["quality"] == {"thermal": "ACCEPTED", "relative_humidity": "ACCEPTED"}
     assert record["views"]["gk2a"]["max_anomaly_k"] == 8.5 and "two_satellites_agree" in record["flags"]
     assert repo.transitions[rid][0]["current"] == "ALERT"
@@ -221,19 +233,25 @@ def test_night_hotspot_both_satellites_see_enters_alert_and_requests_the_agent()
                                                    "requested_at": "2026-10-11T18:20:00Z"}
 
 
-def test_daytime_and_a_single_satellite_are_capped_at_warning():
+def test_daytime_and_a_single_satellite_go_through_the_same_curves():
     repo = FakeRepo()
-    hot = {"himawari9": everywhere(anomaly=9.0, hot=True), "gk2a": everywhere(anomaly=9.0, hot=True)}
+    hot = {"himawari9": everywhere(anomaly=9.5, hot=True), "gk2a": everywhere(anomaly=9.5, hot=True)}
     cycle(repo, hot, now=DAY + timedelta(minutes=10))
     record = repo.docs[REGIONS[0].id]["latest"]
-    assert record["status"] == "WARNING" and record["utilities"]["ALERT"] == 1.0
-    assert "capped at WARNING (daytime)" in record["reason"] and record["quality"]["thermal"] == "DEGRADED"
+    assert record["status"] == "ALERT" and "capped" not in record["reason"] and "daytime" in record["flags"]
+    assert record["adjust"]["sun_shift_k"] > 0.9   # the midday sun raised the thresholds by almost 1 K
+    warm = {"himawari9": everywhere(anomaly=7.2, hot=True), "gk2a": everywhere(anomaly=7.2, hot=True)}
+    noon, night = FakeRepo(), FakeRepo()
+    cycle(noon, warm, now=DAY + timedelta(minutes=10))
+    cycle(night, warm)
+    assert noon.docs[REGIONS[0].id]["status"] == "WARNING" and night.docs[REGIONS[0].id]["status"] == "ALERT"
     single = FakeRepo()
     cycle(single, {"himawari9": everywhere(anomaly=9.0, hot=True), "gk2a": None},
           published=lambda name, slot: name == "himawari9")
     record = single.docs[REGIONS[0].id]["latest"]
-    assert record["status"] == "WARNING" and "single satellite himawari9" in record["reason"]
-    assert single.meta_doc.get("agent_pending") is None
+    assert record["status"] == "ALERT" and "single_satellite:himawari9" in record["flags"]   # GK2A had no slot: backup
+    assert record["quality"]["thermal"] == "DEGRADED"
+    assert REGIONS[0].id in single.meta_doc["agent_pending"]   # entering ALERT asks for the agent, whatever the view
 
 
 def test_cloud_makes_regions_not_observable_with_a_reason():
@@ -253,17 +271,18 @@ def test_firms_is_asked_once_and_only_when_a_hotspot_is_possible():
         calls.append((bbox, start, end))
         return [{"latitude": r.lat, "longitude": r.lon, "confidence": "h", "acq_ts": NIGHT} for r in REGIONS]
 
-    warm = {"himawari9": everywhere(anomaly=6.8, hot=True), "gk2a": everywhere(anomaly=6.8, hot=True)}
+    warm = {"himawari9": everywhere(anomaly=6.85, hot=True), "gk2a": everywhere(anomaly=6.85, hot=True)}
     alone = FakeRepo()
     cycle(alone, warm, rh=35.0, hotspots=lambda *a: [])
-    assert alone.docs[REGIONS[0].id]["latest"]["utilities"] == {"SAFE": 0.0, "WARNING": 0.6, "ALERT": 0.44}
+    assert alone.docs[REGIONS[0].id]["latest"]["utilities"] == {"SAFE": 0.0, "WARNING": 0.575, "ALERT": 0.425}
     repo = FakeRepo()
-    repo.docs[REGIONS[0].id] = {"id": REGIONS[0].id, "power": {"observed_at": "2026-10-10T18:00:00Z", "delta_t_k": 3.2}}
+    repo.docs[REGIONS[0].id] = {"id": REGIONS[0].id, "power": {"observed_at": "2026-10-10T18:00:00Z",
+                                                               "delta_t_k": 3.2, "baseline_std_k": 1.0}}
     cycle(repo, warm, rh=35.0, hotspots=hotspots)
     assert len(calls) == 1 and calls[0][1] == datetime(2026, 10, 11, 6, 10, tzinfo=UTC)   # one request, 12 h back
     record = repo.docs[REGIONS[0].id]["latest"]
     assert record["support"] == {"viirs_support": 1.0, "power_support": 1.0}
-    assert record["utilities"]["ALERT"] == 0.5692 and record["status"] == "ALERT"   # within the safety margin
+    assert record["utilities"]["ALERT"] == 0.5577 and record["status"] == "ALERT"   # within the safety margin
     assert repo.docs[REGIONS[1].id]["latest"]["status"] == "WARNING"               # VIIRS alone lifts it less
 
 
@@ -284,14 +303,36 @@ def test_humidity_is_asked_once_an_hour_and_is_optional():
     assert summary["statuses"] == {"SAFE": 3}
 
 
+NORMAL = {"mean": [90.0] * 24, "std": [4.0] * 24}   # POWER's humidity normal per UTC hour
+
+
 @pytest.mark.parametrize("rh", [150.0, -5.0, math.nan])
-def test_the_record_shows_the_humidity_the_rules_used(rh):
-    """An invalid humidity is left out of the rules, so the audit record must not show it as an accepted input."""
+def test_an_invalid_humidity_is_recorded_as_missing_and_shifts_nothing(rh):
+    """An invalid humidity is left out, so the audit record must not show it as an accepted input."""
     repo = FakeRepo()
+    repo.docs[REGIONS[0].id] = {"id": REGIONS[0].id, "power": {"rh_normal": NORMAL}}
     cycle(repo, {"himawari9": everywhere(), "gk2a": everywhere()}, rh=rh)
     record = repo.docs[REGIONS[0].id]["latest"]
     assert record["inputs"]["relative_humidity_pct"] is None and record["quality"]["relative_humidity"] == "MISSING"
-    assert "model_estimate" not in record["flags"] and "humidity unavailable" in record["reason"]
+    assert record["inputs"]["dry_source"] is None and record["adjust"]["rh_shift_k"] == 0.0
+    assert "model_estimate" not in record["flags"] and "no humidity anomaly" in record["reason"]
+
+
+def test_dryness_comes_from_power_and_falls_back_to_open_meteo():
+    fresh = {"observed_at": "2026-10-09T18:00:00Z", "dry_z": 2.0, "rh_normal": NORMAL}
+    assert geo.dryness(fresh, NIGHT, 70.0) == (2.0, "nasa_power")                 # one source: POWER vs its normal
+    stale = {**fresh, "observed_at": "2026-10-05T18:00:00Z"}                       # older than 4 days
+    assert geo.dryness(stale, NIGHT, 70.0) == (5.0, "open_meteo_fallback")      # (90 - 70) / 4
+    assert geo.dryness({**stale, "rh_normal": None}, NIGHT, 70.0) == (None, None)
+    assert geo.dryness({**stale, "rh_normal": [[90.0, 4.0]] * 24}, NIGHT, 70.0) == (None, None)   # an unknown shape
+    assert geo.dryness({**fresh, "dry_z": None}, NIGHT, 70.0) == (5.0, "open_meteo_fallback")   # POWER has no RH
+    assert geo.dryness(None, NIGHT, None) == (None, None)
+    repo = FakeRepo()
+    repo.docs[REGIONS[0].id] = {"id": REGIONS[0].id, "power": stale}
+    cycle(repo, {"himawari9": everywhere(), "gk2a": everywhere()}, rh=70.0)
+    record = repo.docs[REGIONS[0].id]["latest"]
+    assert record["inputs"]["dry_source"] == "open_meteo_fallback" and record["inputs"]["dry_z"] == 5.0
+    assert "dryness_fallback:open_meteo" in record["flags"] and record["adjust"]["rh_shift_k"] > 0.98
 
 
 def test_a_broken_satellite_leaves_the_other_one_and_nothing_is_invented_without_both():
@@ -328,7 +369,8 @@ def test_unreachable_buckets_skip_the_cycle_without_marking_a_slot():
 def test_power_support_comes_from_the_region_document():
     repo = FakeRepo()
     repo.docs[REGIONS[0].id] = {"id": REGIONS[0].id,
-                                "power": {"observed_at": "2026-10-09T18:00:00Z", "delta_t_k": 3.5}}
+                                "power": {"observed_at": "2026-10-09T18:00:00Z", "delta_t_k": 3.5,
+                                          "baseline_std_k": 1.0}}
     cycle(repo, {"himawari9": everywhere(anomaly=9.0, hot=True), "gk2a": everywhere(anomaly=9.0, hot=True)})
     doc = repo.docs[REGIONS[0].id]
     assert doc["latest"]["support"] == {"power_support": 1.0} and doc["power"]["delta_t_k"] == 3.5
@@ -349,7 +391,7 @@ def test_every_slot_is_archived_in_its_wib_day_with_hot_pixels_and_viirs():
     assert day["regions"] == [r.id for r in REGIONS] and list(day["slots"]) == ["0110"]
     slot = json.loads(day["slots"]["0110"])
     assert slot["at"] == "2026-10-11T18:10:00Z" and slot["satellites"] == ["himawari9", "gk2a"]
-    assert slot["status"] == "AAA" and slot["delta_t"] == [8.5, 8.5, 8.5] and "trimmed" not in slot
+    assert slot["status"] == "AAA" and slot["delta_t"] == [8.8, 8.8, 8.8] and "trimmed" not in slot
     first = slot["hot"][REGIONS[0].id]
     assert first["himawari9"] == [[-1.0, 113.75, 9.0], [-1.01, 113.76, 7.0]] and first["gk2a"] == []
     assert first["view"] == "two_satellites_agree"

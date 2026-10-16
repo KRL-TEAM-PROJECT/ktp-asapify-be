@@ -26,8 +26,9 @@ def hours(start, end):
         t += timedelta(hours=1)
 
 
-def power_fetch(recent_celsius, humidity, calls=None, frontier=FRONTIER):
-    """History years read 25 °C; the current year reads `recent_celsius`; hours after `frontier` are unpublished."""
+def power_fetch(recent_celsius, humidity, calls=None, frontier=FRONTIER, normal_humidity=None):
+    """History years read 25 °C and `normal_humidity` (default: `humidity`); the current year reads `recent_celsius`
+    and `humidity`; hours after `frontier` are unpublished."""
     def fetch(lat, lon, start, end):
         if calls is not None:
             calls.append((lat, start, end))
@@ -38,10 +39,22 @@ def power_fetch(recent_celsius, humidity, calls=None, frontier=FRONTIER):
                 ts[key] = rh[key] = -999.0
             else:
                 ts[key] = recent_celsius if t.year == NOW.year else 25.0
-                rh[key] = humidity
+                rh[key] = humidity if t.year == NOW.year or normal_humidity is None else normal_humidity
         return {"geometry": {"coordinates": [lon, lat, 10]}, "header": {"fill_value": -999.0, "sources": ["TEST"]},
                 "properties": {"parameter": {"TS": ts, "RH2M": rh}}}
     return fetch
+
+
+def storable(value, inside_list=False):
+    """What Firestore would refuse: an array directly inside an array."""
+    if isinstance(value, (list, tuple)):
+        assert not inside_list, "Firestore stores no array inside an array"
+        for v in value:
+            storable(v, True)
+    elif isinstance(value, dict):
+        for v in value.values():
+            storable(v)
+    return value
 
 
 class FakeRepo:
@@ -63,14 +76,16 @@ class FakeRepo:
         return self.baselines.get(region_id)
 
     def save_baseline(self, region_id, doc):
-        self.baselines[region_id] = doc
+        self.baselines[region_id] = storable(doc)
 
     def save_region(self, doc, hours):
+        storable(doc), storable(hours)
         self.docs.setdefault(doc["id"], {}).update(doc)
         self.hours.setdefault(doc["id"], []).extend(hours)
 
     def save_slots(self, entries, day=None):
         for doc, record, transitions in entries:
+            storable(doc), storable(record), storable(transitions)
             self.docs.setdefault(doc["id"], {}).update(doc)   # top-level fields replaced whole, like merge=list(doc)
             if record is not None:
                 self.slots.setdefault(doc["id"], []).append(record)
@@ -91,7 +106,11 @@ class FakeRepo:
         if doc is None:
             return None
         slots = self.slots.get(region_id, [])
-        slots = [s for s in slots if window[0] <= s["observed_at"] < window[1]] if window else slots[-hours * 6:]
+        if window:
+            slots = [s for s in slots if window[0] <= s["observed_at"] < window[1]]
+        elif slots:   # like FirestoreRepo: the `hours` up to the latest slot, whatever the cadence
+            since = datetime.fromisoformat(slots[-1]["observed_at"].replace("Z", "+00:00")) - timedelta(hours=hours)
+            slots = [s for s in slots if s["observed_at"] > f"{since:%Y-%m-%dT%H:%M:%SZ}"]
         return {**doc, "slots": slots, "hours": self.hours.get(region_id, [])[-hours:],
                 "transitions": self.transitions.get(region_id, [])[::-1],
                 "verifications": self.verifications.get(region_id, [])[::-1]}
@@ -154,6 +173,40 @@ def test_power_support_records_every_published_hour_and_rotates_regions():
     assert record["quality"] == {"skin_temperature": "ACCEPTED", "relative_humidity": "ACCEPTED"}
     assert "reanalysis_estimate" in record["flags"]
     assert tick(repo)["regions"][0] == REGIONS[2].id     # the never-processed region goes next
+
+
+def test_power_measures_its_newest_humidity_against_its_own_normal():
+    repo = FakeRepo()
+    run_cycle(repo, REGIONS, NOW, batch=1, fetch_power=power_fetch(25.5, 68.0, normal_humidity=80.0))
+    record = repo.hours[REGIONS[0].id][-1]["inputs"]
+    assert record["rh_baseline_pct"] == 80.0 and record["dry_z"] == 4.0    # (80 - 68) / the 3 % floor
+    summary = repo.docs[REGIONS[0].id]["power"]
+    assert summary["dry_z"] == 4.0 and summary["dry_z_hours"] == 24         # the last 24 published hours
+    assert len(summary["rh_normal"]["mean"]) == 24 and summary["rh_normal"]["mean"][18] == 80.0
+    assert summary["rh_normal"]["std"][18] == 0.0   # two flat lists: Firestore stores no array inside an array
+    assert "entries_rh" in repo.baselines[REGIONS[0].id]
+
+
+def test_a_summary_from_before_the_dryness_is_rebuilt_without_waiting_for_new_hours():
+    repo = FakeRepo()
+    run_cycle(repo, REGIONS, NOW, batch=3, fetch_power=power_fetch(25.5, 68.0, normal_humidity=80.0))
+    for doc in repo.docs.values():   # as deployed before: same frontier, no dry_z or rh_normal
+        doc["power"] = {k: v for k, v in doc["power"].items() if k not in ("dry_z", "dry_z_hours", "rh_normal")}
+    repo.meta_doc.pop("summary")
+    again = run_cycle(repo, REGIONS, NOW, batch=3, fetch_power=power_fetch(25.5, 68.0, normal_humidity=80.0))
+    assert again["skipped"] is None and again["hours"] == 0 and len(again["regions"]) == 3
+    assert all(doc["power"]["dry_z"] == 4.0 and "rh_normal" in doc["power"] for doc in repo.docs.values())
+    assert run_cycle(repo, REGIONS, NOW, batch=3, fetch_power=power_fetch(25.5, 68.0))["skipped"]
+
+
+def test_an_old_baseline_without_humidity_is_rebuilt_once():
+    repo, calls = FakeRepo(), []
+    run_cycle(repo, REGIONS, NOW, batch=1, fetch_power=power_fetch(25.5, 80.0))
+    del repo.baselines[REGIONS[0].id]["entries_rh"]
+    repo.meta_doc.pop("caught_up", None)
+    repo.docs[REGIONS[0].id]["power"]["observed_at"] = "2026-10-10T00:00:00Z"   # behind again
+    run_cycle(repo, REGIONS[:1], NOW, batch=1, fetch_power=power_fetch(25.5, 80.0, calls))
+    assert "entries_rh" in repo.baselines[REGIONS[0].id] and len(calls) == 1 + 5 + 1   # probe, 5 years, recent
 
 
 def test_idle_cycles_cost_one_probe_and_new_hours_wake_the_next_pass():

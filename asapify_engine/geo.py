@@ -1,8 +1,10 @@
-"""Geostationary cycle, every 10 minutes: Himawari-9 and GK2A -> one fused thermal input per peat region -> rules
-(VIIRS and NASA POWER as support, capped at WARNING by day or with one satellite) -> state machine -> agent if needed.
+"""Geostationary cycle, every 15 minutes: Himawari-9 and GK2A -> one fused thermal input per peat region -> rules
+(curves shifted by the air's dryness against its NASA POWER normal and by the sun; VIIRS and POWER as support) ->
+state machine -> agent if needed.
 
-This replaces NASA POWER as the source of the status: POWER is 2-3 days late and 50 km coarse, so it only supports
-now (ingest.py). Satellites, FIRMS and Open-Meteo go through injectable callables and storage through the Repo
+The satellites set the status; NASA POWER is 2-3 days late and 50 km coarse, so it gives the normal and the support
+(ingest.py). Both satellites scan every 10 minutes and the cycle runs every 15, so about one slot in three is skipped:
+smouldering peat changes over days, not minutes. Satellites, FIRMS and Open-Meteo go through injectable callables and storage through the Repo
 protocol of ingest.py, so the whole flow runs in tests without the internet or Firestore.
 """
 from __future__ import annotations
@@ -13,11 +15,10 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable
 
 from . import openmeteo, satellites
-from .canonical import Quality
 from .contextual import MAX_PIXELS, RegionThermal
 from .fsm import mark_agent_called, should_trigger_agent, step
 from .fusion import MAX_VIIRS, SATELLITES, FusionConfig, Fused, fuse, solar_elevation_deg
-from .ingest import Repo, iso, parse, region_doc, state_from_doc, transition_doc
+from .ingest import DRY_SIGMA_FLOOR, Repo, iso, parse, region_doc, state_from_doc, transition_doc
 from .models import Status
 from .regions import Region
 from .rules import Assessment, RuleConfig, assess, valid_input
@@ -58,14 +59,26 @@ def _no_view_reason(views: dict[str, RegionThermal | None], fused: Fused, cfg: R
     return "not observable: too few clear pixels in the region"
 
 
-def _cap(fused: Fused, night: bool) -> str | None:
-    """Why a DEGRADED view may give WARNING at most (design document section 3.5)."""
-    if fused.quality is not Quality.DEGRADED:
-        return None
-    reasons = [] if night else ["daytime"]
-    reasons += [f.replace("_", " ").replace(":", " ") for f in fused.flags
-                if f.startswith(("single_satellite", "satellites_disagree"))]
-    return ", ".join(reasons)
+def dryness(power: dict | None, slot: datetime, humidity: float | None,
+            fusion: FusionConfig = FusionConfig()) -> tuple[float | None, str | None]:
+    """The air's dryness against its normal, in σ (positive = drier), and where it came from.
+
+    NASA POWER's own mean of its last 24 published hours while it is fresh (one source for normal and now); else (POWER
+    late, or no usable humidity in those hours) this hour's Open-Meteo humidity against POWER's normal for the hour, as
+    a flagged fallback; else none.
+    """
+    power = power or {}
+    if power.get("dry_z") is not None and power.get("observed_at"):
+        if (slot - parse(power["observed_at"])).total_seconds() / 3600 <= fusion.power_max_age_hours:
+            return power["dry_z"], "nasa_power"
+    normals = power.get("rh_normal")
+    normals = normals if isinstance(normals, dict) else {}
+    means, stds = normals.get("mean") or [], normals.get("std") or []
+    mean = means[slot.hour] if len(means) == 24 else None
+    if humidity is not None and mean is not None:
+        std = stds[slot.hour] if len(stds) == 24 else None
+        return round((mean - humidity) / max(std or 0.0, DRY_SIGMA_FLOOR), 3), "open_meteo_fallback"
+    return None, None
 
 
 def assess_slot(region: Region, views: dict[str, RegionThermal | None], slot: datetime, *,
@@ -78,22 +91,25 @@ def assess_slot(region: Region, views: dict[str, RegionThermal | None], slot: da
     hot = any(v is not None and v.n_hot > 0 for v in views.values())   # FIRMS is only asked when a hotspot may be
     fused = fuse(views, night=night, slot=slot, centre=(region.lat, region.lon),
                  hotspots=hotspots() if hot else (), power=power, cfg=fusion)
+    dry, dry_source = dryness(power, slot, humidity, fusion)
     if fused.delta_t is None:
         result = Assessment(Status.NO_OBSERVABLE, {}, {}, _no_view_reason(views, fused, cfg))
     else:
-        result = assess(fused.delta_t, humidity, fused.cloud_pct, cfg, support=fused.support, cap=_cap(fused, night))
+        result = assess(fused.delta_t, fused.cloud_pct, cfg, dry_z=dry, sun_elevation_deg=elevation,
+                        support=fused.support)
     record = {
         "observed_at": iso(slot), "night": night, "sun_elevation_deg": round(elevation, 1),
         "views": {name: v.summary() if v is not None else None for name, v in views.items()},
         "inputs": {"delta_t_k": fused.delta_t, "cloud_cover_pct": fused.cloud_pct, "relative_humidity_pct": humidity,
-                   "hot_lat": fused.hot_lat, "hot_lon": fused.hot_lon},
+                   "dry_z": dry, "dry_source": dry_source, "hot_lat": fused.hot_lat, "hot_lon": fused.hot_lon},
         "support": fused.support, "viirs": list(fused.viirs),
         "quality": {"thermal": fused.quality.value, "relative_humidity": "ACCEPTED" if humidity is not None else "MISSING"},
-        "flags": list(fused.flags) + (["model_estimate"] if humidity is not None else []),
-        "sources": {"thermal": THERMAL, "relative_humidity": openmeteo.SOURCE, "viirs_support": "nasa_firms",
-                    "power_support": "nasa_power"},
+        "flags": list(fused.flags) + (["model_estimate"] if humidity is not None else [])
+        + (["dryness_fallback:open_meteo"] if dry_source == "open_meteo_fallback" else []),
+        "sources": {"thermal": THERMAL, "relative_humidity": openmeteo.SOURCE, "dryness": dry_source,
+                    "viirs_support": "nasa_firms", "power_support": "nasa_power"},
         "status": result.status.value, "utilities": result.utilities, "memberships": result.memberships,
-        "reason": result.reason,
+        "adjust": result.adjust or None, "reason": result.reason,
     }
     return result, record
 
