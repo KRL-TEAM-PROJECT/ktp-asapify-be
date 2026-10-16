@@ -4,6 +4,7 @@ Risk engine and operator API for the `KRL-TEAM-PROJECT/ktp-asapify-fe` frontend,
 
 > **Frozen on 16 October 2026.** Development has stopped; this repository and its docs describe the system as it
 > stands. Only fixes that keep the deployed service running belong here. Known limitations are listed below.
+> The tag `freeze-2026-10-16` marks the submitted state of `main`; the live image is `gh-f40381a`.
 
 ## Notifications
 
@@ -43,6 +44,10 @@ Statuses are `SAFE` < `WARNING` < `ALERT`, plus `NO_OBSERVABLE` (compact codes `
 - **History.** Slots stored before a rule change keep the result they had; nothing is recomputed (the ALERT
   heat requirement applies from its deployment on).
 - **Agent.** NASA FIRMS hotspots are its only evidence (no imagery), with a hard quota of 20 runs a day.
+- **Gaps in the day archive.** Until 16 Oct the worker `asapify-notify` ran with 512 MiB: in the 24 hours to
+  16 Oct 11:00 UTC, 17 of 144 geo ticks returned 503 after the instance passed that limit, and a failed tick can
+  leave its slot out of the archive (15 Oct holds 86 of 144 slots). The worker was raised to 1 GiB on 16 Oct
+  (revision `asapify-notify-00021`); days before that keep their gaps. See ENGINE.md (Cost and limits).
 
 ## Local
 

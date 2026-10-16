@@ -7,7 +7,9 @@ join page (`/join`) and reads it. Nobody subscribes, links a personal chat or ke
 alerts and answers only two things: `/start` in a group (whether the group is now linked) and any private message (a
 pointer to `/join`). It answers no questions.
 
-Status at the freeze (16 October 2026): live in `hack2skill-510921`; published alerts reach the linked group.
+Status at the freeze (16 October 2026): live in `hack2skill-510921` (bot `@asapify_alert_bot`); published alerts
+reach the linked group. The group's invite link was not saved yet on 16 Oct (`GET /api/v1/telegram/join` returned
+`[]`), so the public join page shows no Join button until an operator does step 5 below.
 
 ## Flow and guarantees
 
