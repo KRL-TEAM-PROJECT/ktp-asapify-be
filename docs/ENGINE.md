@@ -40,7 +40,7 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    ΔBT anomaly is also ≥ 3 K. The 3.9 µm test is the MODIS/VIIRS T4 test: thin cirrus raises ΔBT by cooling 10.4 µm,
    a fire warms 3.9 µm. `delta_t_k` for the rules is the anomaly of the strongest fire-like pixel (0 when there is
    none), so a noisy background cannot reach WARNING on its own. Night streaks and a per-pixel history are not used
-   yet; they can join once enough slots are stored.
+   (left undone at the freeze, 16 October 2026).
 4. **Two satellites confirm each other** (`fusion.py`). Himawari-9 (140.7° E) and GK2A (128.2° E) see the same peat
    from different angles. Both hot within 8 km = confirmed; both quiet = confirmed quiet. In both cases ΔT is the
    smaller of the two, the size both satellites see. Otherwise they disagree: ΔT is the larger one, and the view is
@@ -123,8 +123,8 @@ strongest anomaly was R3.50S105.625E (South Sumatra): 39 K (Himawari) and 42 K (
 cell. Two choices come from this slot. The first version (ΔBT only, peat pixels only) had 6 of its 11 hot Himawari
 regions without any VIIRS fire nearby (thin cirrus); the 3.9 µm test removed all 6. Scoring the whole cell instead
 of the peat pixels alone then found 10 regions with a hot pixel next to a VIIRS fire instead of 4, because most fire pixels sat
-just outside the simplified KHG polygons. One slot is not a calibration: repeat with more nights and daytime slots
-before trusting any number.
+just outside the simplified KHG polygons. One slot is not a calibration, and this was the only one done before the
+freeze: treat every number as a hypothesis.
 
 ## Cost and limits (billing guardrails)
 

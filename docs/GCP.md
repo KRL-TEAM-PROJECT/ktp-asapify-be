@@ -20,7 +20,10 @@ To run every stage at once from the user's Cloud Shell account, see the
 
 The datastore.user role applies to the whole project, so use a project dedicated to ASAPify.
 The scripts create no service-account JSON key, no Owner/Editor runtime account, no member invitation,
-no new billing, VM, Redis or ingest cron. Schedulers/agents wait for a validated pipeline.
+no new billing, VM or Redis. Cloud Scheduler drives the engine (`asapify-geo-tick` every 10 minutes,
+`asapify-engine-tick` every 15) and the notification sweep (every minute); see [ENGINE.md](ENGINE.md) and
+[NOTIFICATIONS.md](NOTIFICATIONS.md). The GCS data bucket is created but no code reads or writes it: the engine
+keeps everything in Firestore.
 
 ## 1. Choose the project and check costs
 
@@ -30,7 +33,7 @@ admin; the scripts never grant admin rights to other users.
 
 Make sure billing is active, then create a budget and notifications at the threshold agreed with Harris.
 A budget alert is not an automatic spending cap; min 0/max 2 does not guarantee zero cost either.
-There is no live cost estimate yet: pixel count, satellite data volume and verification frequency are not measured.
+Measured costs and free-tier margins are in [ENGINE.md](ENGINE.md) (Cost and limits).
 
 From a checkout of the backend branch:
 
@@ -115,16 +118,17 @@ The engine writes its own data: Cloud Scheduler calls the worker's geo tick ever
 The old inline Telegram path was replaced by a multi-channel outbox. Follow [NOTIFICATIONS.md](NOTIFICATIONS.md)
 for the worker, Cloud Tasks, the Telegram group, the Firestore index and cloud tests.
 
-## Remaining required work
+## Left undone at the freeze (16 October 2026)
 
-1. Align the Sumatra/Kalimantan scope and night window decision with the team; record it in the worklog.
-2. Calibrate the Himawari/GK2A thresholds against more VIIRS nights and daytime slots (one night checked, see ENGINE.md); add night streaks and neighbour support.
-3. Complete the ADK/Gemini agent with VIIRS/imagery evidence and tool limits; drop the old path's ToPeCAl dependency.
-4. Complete alert closing, outbox recovery, historical decision snapshots and signed image URL refresh.
-5. Test real tokens, concurrent Firestore transactions, an alert in the Telegram group, the container build and the Firebase rewrite.
-6. Only then add Cloud Scheduler for jobs that are runnable and idempotent.
+1. Scope stays Sumatra + Kalimantan (65 peat regions) with the night window of ENGINE.md.
+2. Thresholds are calibrated on one VIIRS night slot only; no night streaks or neighbour support.
+3. The agent's evidence is NASA FIRMS only (no imagery).
+4. Alerts cannot be closed early; they expire one hour after publishing. No historical decision snapshots.
+5. Not tested in the cloud: duplicate Cloud Tasks deliveries and a worker stopped after a claim (NOTIFICATIONS.md).
 
-Do not describe this stage as an operational early-warning system or a validated end-to-end satellite/AI demo.
+Proven live: real tokens, the container build and deploy pipeline, the Firebase rewrite, satellite data on the map
+and an alert published to the Telegram group. Do not describe this as an operational early-warning system or a
+validated end-to-end satellite/AI system.
 
 ## Official references checked
 

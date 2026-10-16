@@ -7,7 +7,7 @@ join page (`/join`) and reads it. Nobody subscribes, links a personal chat or ke
 alerts and answers only two things: `/start` in a group (whether the group is now linked) and any private message (a
 pointer to `/join`). It answers no questions.
 
-Status: deployed to `hack2skill-510921` in `dry_run`; no message has reached a real group yet.
+Status at the freeze (16 October 2026): live in `hack2skill-510921`; published alerts reach the linked group.
 
 ## Flow and guarantees
 
@@ -88,11 +88,11 @@ Telegram turns the group into a supergroup, the link follows the new chat id.
 Undo: `gcloud run services update <service> --update-env-vars NOTIFICATION_MODE=dry_run,TELEGRAM_ENABLED=false`
 on `asapify-api` and `asapify-notify`.
 
-### Cloud tests still needed
+### Not tested in the cloud
 
-- Two identical Cloud Tasks jobs: one claim; stop the worker after a claim to check `unknown`.
-- Publish once with the bot in the group and record published_at, started_at and finished_at; never report
-  `accepted` as phone latency.
+- Two identical Cloud Tasks jobs (one claim expected), and a worker stopped after a claim (`unknown` expected).
+  The offline tests cover the single claim and `unknown` after a send timeout, not the sweep's 5-minute rule.
+- Latency from publishing to the group was never measured; never report `accepted` as phone latency.
 
 ## API
 

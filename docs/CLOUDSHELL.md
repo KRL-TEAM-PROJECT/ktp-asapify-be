@@ -1,18 +1,20 @@
 # Deploying ASAPify from Cloud Shell
 
 Fixed target: project `hack2skill-510921`, Jakarta region `asia-southeast2`, database `asapify`.
-The runner handles the API, worker, queue, indexes and the recovery scheduler. Notifications stay `dry_run`;
-Telegram is disabled until `gcp/telegram-live.sh`. This deployment does not implement the satellite/AI pipeline.
+The runner handles the API, worker, queue, indexes and the recovery scheduler, and always leaves notifications in
+`dry_run`. The engine's schedule (`gcp/geo-setup.sh`), the agent (`gcp/agent-setup.sh`) and live Telegram
+(`gcp/telegram-live.sh`) are separate scripts.
 
-## Status, 13 October 2026
+## History up to the freeze (16 October 2026)
 
 - 9 Oct: Fitroh ran the `backend` stage and set up Hosting. The API, worker, queue, three indexes and the
   sweep schedule are live. The FE is deployed by GitHub Actions in the FE repo (see `docs/GCP.md` there).
 - 12 Oct: the API and worker image was replaced with `main` `c55a14c` (tag `fix-20261012-113615`) using
   "Image-only update" below. Mode stayed `dry_run`; Telegram and FCM stayed off.
 - 13 Oct: automatic deployment is active (see "Automatic deployment" below); first run deployed `gh-dfc52e1`.
-- Not done yet: Firestore rules were never released, Secret Manager is empty (no Telegram bot yet),
-  and the data bucket is empty, so the live map shows `DATA_NOT_READY`.
+  Firestore rules released (no direct browser access).
+- 16 Oct, freeze: the engine fills the map every 10 minutes, Telegram is live and published alerts reach the linked
+  group. The GCS data bucket stays empty: no code uses it.
 
 ## 1. Open Cloud Shell and get the source
 
@@ -81,8 +83,8 @@ Rollback: run the same `gcloud run services update` with the previous image tag.
 ### Automatic deployment (GitHub Actions)
 
 `.github/workflows/deploy-backend.yml` runs the image-only update above whenever `main` changes in
-`asapify_api/`, `main.py`, `Dockerfile` or `requirements-api.txt` (it can also be started manually with
-`workflow_dispatch`). Order: tests → build and push image `gh-<sha7>` → swap the image on both services →
+`asapify_api/`, `asapify_engine/`, `asapify_agent/`, `main.py`, `Dockerfile`, `requirements-api.txt` or the
+workflow itself (it can also be started manually with `workflow_dispatch`). Order: tests → build and push image `gh-<sha7>` → swap the image on both services →
 smoke test through Hosting (health version = new tag, operator endpoint without a token = 401) → on failure,
 automatic return to the previous image. Env vars, `dry_run`/`live` mode, IAM and the schedule are untouched.
 
@@ -156,8 +158,8 @@ python3 -m gcp.cloudshell verify --apply
 ```
 
 HTTP checks do not prove that sign-in, Firestore transactions, provider delivery or the satellite pipeline work.
-Without pipeline data, `DATA_NOT_READY` is the expected state. Continue with the integration tests in
-`docs/NOTIFICATIONS.md` before enabling real channels. Record the URL and the first error message for diagnosis;
+Until the first geo tick writes a slot, `DATA_NOT_READY` is the expected state. Read `docs/NOTIFICATIONS.md`
+before enabling real channels. Record the URL and the first error message for diagnosis;
 never copy tokens or logs that contain secrets.
 
 References: [Cloud Run + Firebase Hosting](https://firebase.google.com/docs/hosting/cloud-run),
