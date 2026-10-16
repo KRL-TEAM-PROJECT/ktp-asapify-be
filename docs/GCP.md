@@ -71,7 +71,7 @@ python tools/set_operator.py --project "$ASAPIFY_PROJECT_ID" --uid 'VERIFIED_UID
 
 No email from a chat gets access automatically. The operator signs out and in again to refresh the claim.
 
-After that, operators add teammates on the Regions page (Operator access, `asapify_api/access_routes.py`):
+After that, operators add teammates on the Admin page (Operator access, `asapify_api/access_routes.py`):
 - An existing, verified Google account becomes an operator at once.
 - Any other address waits in `operator_access` and becomes an operator at its first sign-in; the web app calls
   `POST /api/v1/access/activate` and refreshes the token.

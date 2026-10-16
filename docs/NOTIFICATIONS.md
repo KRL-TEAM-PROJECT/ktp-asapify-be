@@ -70,7 +70,7 @@ application's database rules.** The one index serves the outbox scan (`notificat
    (worker only) and a random `telegram-webhook-secret` (API only), sets `TELEGRAM_BOT_USERNAME`,
    `TELEGRAM_ENABLED=true` and `NOTIFICATION_MODE=live` on both services, and points the bot's webhook at
    `/api/v1/notifications/telegram-webhook` with that secret (`allowed_updates=["message"]`).
-4. An operator opens the Regions page, Telegram groups, "Add the bot to a group". The app gets a one-time
+4. An operator opens the Admin page, Telegram groups, "Add the bot to a group". The app gets a one-time
    `t.me/<bot>?startgroup=<code>` link (10 minutes, stored hashed, used once). Telegram asks which group, adds the
    bot and posts `/start@<bot> <code>` there; the webhook links that group and its title shows in the panel. Telegram
    does not always post that message (never when the bot is already in the group), so the panel also shows it to
