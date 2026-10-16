@@ -85,6 +85,23 @@ The API's service account can already read accounts (`roles/firebaseauth.viewer`
 sessions also needs `firebaseauth.users.update`: `gcp/access-setup.sh` grants only that, through a custom role
 (`APPLY=1` to run it).
 
+**Self-registration for the judging period (temporary).** While `OPERATOR_SIGNUP_UNTIL` (a WIB date) is set on
+`asapify-api` and not past, a signed-in Google account that is not an operator sees a reCAPTCHA Enterprise checkbox
+on the sign-in page. Solving it calls `POST /api/v1/access/signup`; the API checks the token with one assessment in
+this project (service account, role `roles/recaptchaenterprise.agent`, no secret key) and sets `role=operator` plus
+`signup_until`. Such an account can read everything, Re-verify and publish or reject, but not use the Admin page
+(operator access, Telegram groups: `ADMIN_ONLY`), and its access ends after that date (`SIGNUP_ENDED`). Adding it on
+the Admin page makes it a full operator; removing it ends its access at once. Each registration lands in
+`audit_log` (`operator_self_signup`). Set it up, with the last day of judging:
+
+```bash
+UNTIL=2026-10-31 bash gcp/signup-setup.sh            # plan
+UNTIL=2026-10-31 APPLY=1 bash gcp/signup-setup.sh    # enable the API, grant the role, create the key, set both
+```
+
+Close it early with `UNTIL=2020-01-01 RECAPTCHA_SITE_KEY=<key> APPLY=1 bash gcp/signup-setup.sh`. Anyone with a Google
+account who passes the CAPTCHA can publish to the Telegram group while it is open: keep the window short.
+
 ## 3. Check the API before connecting Hosting
 
 The first deploy uses private IAM. Use the gcloud proxy, which adds the cloud identity automatically:

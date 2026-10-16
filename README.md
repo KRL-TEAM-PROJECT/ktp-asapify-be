@@ -19,7 +19,7 @@ There are no personal subscriptions, inboxes or push messages.
 
 | Component | Status |
 |---|---|
-| FastAPI `/api/v1`: health, regions, day archive, agent, decisions, operator access, notifications | Implemented; reads the engine's Firestore documents. The pixel grid / night / cluster API (15 Oct) and the never-built alert list/close endpoints (16 Oct) were removed |
+| FastAPI `/api/v1`: health, regions, day archive, agent, decisions, operator access (plus CAPTCHA self-registration for the judging period, GCP.md), notifications | Implemented; reads the engine's Firestore documents. The pixel grid / night / cluster API (15 Oct) and the never-built alert list/close endpoints (16 Oct) were removed |
 | Authentication | Firebase ID token, verified email, custom claim `role=operator`; revocation checked |
 | Public read-only | `/api/v1/public/regions`, `/regions/{id}` (24 h at most), `/days`, `/days/{date}`: the map, region detail and day archive for everyone, without operator emails or decision notes, and without actions. Cached by the Hosting CDN (`s-maxage` 120 s, past days 1 day) so public traffic barely reaches Firestore |
 | Operator decision | Firestore transaction: decision, alert reservation, audit; a second decision is refused |

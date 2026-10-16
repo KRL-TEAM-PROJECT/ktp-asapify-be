@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 
 import firebase_admin
 from firebase_admin import auth
-from fastapi import Header
+from fastapi import Depends, Header
 
-from .core import ApiProblem
+from .core import ApiProblem, utc_now
+
+SIGNUP_TZ = timezone(timedelta(hours=7))   # the self-registration's last day is a WIB calendar day
 
 
 @lru_cache
@@ -36,11 +39,36 @@ def require_user(authorization: str | None = Header(default=None)) -> dict:
         raise ApiProblem(503, "AUTH_UNAVAILABLE", "The authentication service is not available yet.")
     if not claims.get("email_verified"):
         raise ApiProblem(403, "FORBIDDEN", "Verify your email address before subscribing.")
-    return {"uid": claims["uid"], "email": claims.get("email", claims["uid"]), "role": claims.get("role")}
+    return {"uid": claims["uid"], "email": claims.get("email", claims["uid"]), "role": claims.get("role"),
+            "signup_until": claims.get("signup_until")}
+
+
+def signup_until() -> date | None:
+    """Last day (WIB) of the operator self-registration for the judging period: OPERATOR_SIGNUP_UNTIL=YYYY-MM-DD.
+    Unset or invalid = closed."""
+    raw = os.environ.get("OPERATOR_SIGNUP_UNTIL", "").strip()
+    try:
+        return date.fromisoformat(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def signup_open(now: datetime | None = None) -> bool:
+    until = signup_until()
+    return until is not None and (now or utc_now()).astimezone(SIGNUP_TZ).date() <= until
 
 
 def require_operator(authorization: str | None = Header(default=None)) -> dict:
     actor = require_user(authorization)
     if actor.get("role") != "operator":
         raise ApiProblem(403, "FORBIDDEN", "This account does not have operator access.")
+    if actor.get("signup_until") and not signup_open():   # self-registered access ends with the judging period
+        raise ApiProblem(403, "SIGNUP_ENDED", "The self-registered access for the judging period has ended.")
+    return actor
+
+
+def require_admin(actor: dict = Depends(require_operator)) -> dict:
+    """The Admin page (operator access, Telegram groups): operators another operator added, not self-registered ones."""
+    if actor.get("signup_until"):
+        raise ApiProblem(403, "ADMIN_ONLY", "Self-registered operators cannot change the Admin settings.")
     return actor
