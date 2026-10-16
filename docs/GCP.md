@@ -120,12 +120,16 @@ for the worker, Cloud Tasks, the Telegram group, the Firestore index and cloud t
 
 ## Left undone at the freeze (16 October 2026)
 
-1. Scope stays Sumatra + Kalimantan (65 peat regions) with the night window of ENGINE.md.
+1. Scope stays Sumatra + Kalimantan (65 peat regions); ALERT can be reached day or night (ENGINE.md, rules).
 2. Thresholds are calibrated on one VIIRS night slot only; no night streaks or neighbour support.
 3. The agent's visual check uses daytime GIBS imagery only (a night observation is checked against the afternoon
    before it); the GIBS layer names were not tested before deployment.
 4. Alerts cannot be closed early; they expire one hour after publishing. No historical decision snapshots.
 5. Not tested in the cloud: duplicate Cloud Tasks deliveries and a worker stopped after a claim (NOTIFICATIONS.md).
+6. The worker `asapify-notify` ran out of memory on about one geo tick in eight at 512 MiB; it was raised to 1 GiB
+   on 16 Oct (ENGINE.md, Cost and limits). Ticks never backfill a skipped slot, so the day archive has gaps.
+7. Two Firestore indexes of the removed subscriber inbox (`notification_recipients`, `notification_inbox`) are still
+   in the live database. Nothing queries them; they can be deleted.
 
 Proven live: real tokens, the container build and deploy pipeline, the Firebase rewrite, satellite data on the map
 and an alert published to the Telegram group. Do not describe this as an operational early-warning system or a

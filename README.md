@@ -4,6 +4,8 @@ Risk engine and operator API for the `KRL-TEAM-PROJECT/ktp-asapify-fe` frontend,
 
 > **Frozen on 16 October 2026.** Development has stopped; this repository and its docs describe the system as it
 > stands. Only fixes that keep the deployed service running belong here. Known limitations are listed below.
+> The tag `freeze-2026-10-16` marks the submitted state of `main` (live image `gh-f40381a` at the freeze); the
+> adaptive fuzzy curves, the visual check and the 15-minute cycle of 16 October came after it.
 
 ## Notifications
 
@@ -48,6 +50,11 @@ Statuses are `SAFE` < `WARNING` < `ALERT`, plus `NO_OBSERVABLE` (compact codes `
   before it), with a hard quota of 20 runs a day. Images never confirm a fire on their own.
 - **Dryness.** NASA POWER is 2-3 days late; while it is older than 4 days, Open-Meteo is measured against POWER's
   normal instead (two models, flagged in the record).
+- **Gaps in the day archive.** A geo tick processes only the newest slot both satellites have published and never
+  backfills, so slots can be skipped: 15 Oct holds 86 of 144 slots. With the 15-minute cycle about one 10-minute
+  scan slot in three is never rated (at most 96 a day). Until 16 Oct the worker `asapify-notify` also ran out of
+  memory on some ticks (17 of 144 returned 503 in the 24 hours to 16 Oct 11:00 UTC); it was raised to 1 GiB on
+  16 Oct (revision `asapify-notify-00021`). See ENGINE.md (Cost and limits).
 
 ## Local
 
