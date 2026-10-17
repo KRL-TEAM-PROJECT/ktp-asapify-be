@@ -135,6 +135,10 @@ def day_window(day: str) -> tuple[str, str]:
     return iso(start), iso(start + timedelta(days=1))
 
 
+def _tenths(values) -> list[float | None]:
+    return [None if v is None else round(v, 1) for v in values]
+
+
 def _hot_pixels(record: dict, name: str) -> list[dict]:
     return ((record.get("views") or {}).get(name) or {}).get("hot_pixels") or []
 
@@ -155,16 +159,24 @@ def archive_slot(slot: datetime, satellites_read: list[str], regions: tuple[Regi
                  records: dict[str, dict]) -> dict:
     """One slot of the day archive (engine_days): every region's status and delta T, plus the hot pixels and nearby
     VIIRS of each region where a satellite saw one. A slot over MAX_SLOT_CHARS loses detail first (fewer pixels and
-    VIIRS per region, then the weakest regions), never a status."""
+    VIIRS per region, then the weakest regions), never a status.
+
+    delta T comes as measured (`delta_t`) and as the rules counted it after dry air and the sun (`delta_t_eff`, since
+    18 October 2026), with the strongest view's counted value where it carried weight (`delta_t_max_eff`, only in
+    slots where some region has one): the status follows the counted values, so a past day explains itself."""
     day, key = archive_key(slot)
     rec = [records.get(r.id) or {} for r in regions]
     status = "".join(STATUS_CODE.get(x.get("status"), "-") for x in rec)
-    delta_t = [None if v is None else round(v, 1) for v in ((x.get("inputs") or {}).get("delta_t_k") for x in rec)]
+    delta_t = _tenths((x.get("inputs") or {}).get("delta_t_k") for x in rec)
+    counted = {"delta_t_eff": _tenths((x.get("adjust") or {}).get("delta_t_eff_k") for x in rec)}
+    strongest = _tenths((x.get("adjust") or {}).get("delta_t_max_eff_k") for x in rec)
+    if any(v is not None for v in strongest):
+        counted["delta_t_max_eff"] = strongest
     hot = [r.id for r, x in zip(regions, rec) if any(_hot_pixels(x, name) for name in SATELLITES)]
     hot.sort(key=lambda rid: -(records[rid]["inputs"]["delta_t_k"] or 0.0))   # strongest first
     full = (MAX_PIXELS, MAX_VIIRS, len(hot))
     for pixels, viirs, keep in [full, (2, 2, len(hot))] + [(1, 1, n) for n in range(len(hot), -1, -1)]:
-        entry = {"at": iso(slot), "satellites": satellites_read, "status": status, "delta_t": delta_t,
+        entry = {"at": iso(slot), "satellites": satellites_read, "status": status, "delta_t": delta_t, **counted,
                  "hot": {rid: _hot_entry(records[rid], slot, pixels, viirs) for rid in hot[:keep]}}
         if (pixels, viirs, keep) != full:
             entry["trimmed"] = True

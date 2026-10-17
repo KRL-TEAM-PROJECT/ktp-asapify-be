@@ -75,7 +75,7 @@ def regions(repo=Depends(get_engine_repo)):
         latest = doc.get("latest") or {}
         out.append({"id": r.id, "province": r.province, "lat": r.lat, "lon": r.lon, "bounds": list(r.bounds),
                     "peat_km2": r.peat_km2, **{k: doc.get(k) for k in SUMMARY},
-                    **{k: latest.get(k) for k in ("inputs", "quality", "reason", "flags", "night")}})
+                    **{k: latest.get(k) for k in ("inputs", "adjust", "quality", "reason", "flags", "night")}})
     return out
 
 

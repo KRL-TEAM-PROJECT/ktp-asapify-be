@@ -147,7 +147,11 @@ Firestore stores no array inside an array). The baseline table in `engine_baseli
 - **Day archive.** Each slot also lands in `engine_days/{YYYY-MM-DD}`, one document per WIB calendar day, in the same
   batch: every region's status code (`S`, `W`, `A`, `N`; `-` = not assessed) and ΔT in `regions` order, plus the
   pixels (`[lat, lon, ΔBT]`) and VIIRS (`[lat, lon, minutes from the slot]`) of the regions with a hot pixel, as one
-  compact JSON string per slot under its WIB time `HHMM`.
+  compact JSON string per slot under its WIB time `HHMM`. ΔT comes twice since 18 October 2026: `delta_t` as
+  measured and `delta_t_eff` as the rules counted it after dry air and the sun, plus `delta_t_max_eff`, the
+  strongest view's counted value where it carried weight (left out of a slot where no region has one). The status
+  follows the counted values, so the map of a past day can say why a region was Alert with a measured ΔT below
+  6.95 K; days archived before have `delta_t` only.
   A slot is kept under 7,000 characters (pixels and VIIRS are cut first, then the weakest regions; `trimmed` says
   so), so a day stays under Firestore's 1 MiB. `alert` / `warning` mark the day for the calendar.
 - **Reads.** `GET /api/v1/operator/days?month=YYYY-MM` lists a month's days and the first and last day;

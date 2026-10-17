@@ -320,6 +320,7 @@ def test_operator_lists_regions_and_reads_one_with_its_slots(api):
     start = datetime(2026, 10, 11, 12, tzinfo=UTC)
     slots = [{"observed_at": f"{start + timedelta(minutes=10 * i):%Y-%m-%dT%H:%M:%SZ}", "status": "SAFE",
               "inputs": {"delta_t_k": 0.4}, "quality": {"thermal": "ACCEPTED"}, "flags": ["two_satellites_quiet"],
+              "adjust": {"delta_t_k": 0.4, "rh_shift_k": 0.3, "sun_shift_k": 0.0, "delta_t_eff_k": 0.7},
               "night": True, "reason": "SAFE has the highest utility (1.000)"} for i in range(30)]
     api.docs[known] = {"id": known, "status": "SAFE", "since": slots[0]["observed_at"],
                        "observed_at": slots[-1]["observed_at"], "utilities": {"SAFE": 1.0}, "latest": slots[-1],
@@ -330,6 +331,7 @@ def test_operator_lists_regions_and_reads_one_with_its_slots(api):
     assert len(listing) == len(load_regions())               # unprocessed regions are listed with status null
     item = next(i for i in listing if i["id"] == known)
     assert item["status"] == "SAFE" and item["flags"] == ["two_satellites_quiet"] and item["night"] is True
+    assert item["adjust"]["delta_t_eff_k"] == 0.7   # the map explains the status with the ΔT that was counted
     assert sum(1 for i in listing if i["status"] is None) == len(listing) - 1
     detail = c.get(f"/api/v1/operator/regions/{known}?hours=2").json()
     assert len(detail["slots"]) == 12 and detail["slots"][-1] == slots[-1] and len(detail["hours"]) == 2
