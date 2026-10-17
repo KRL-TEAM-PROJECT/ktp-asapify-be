@@ -151,6 +151,51 @@ def test_support_is_finite_and_at_most_one():
     assert "viirs_support" not in assess(6.9, 10.0, support={"viirs_support": nan}).memberships
 
 
+# ---------- two attributes: the satellites' consensus (mean) and the strongest valid view (max) ----------
+
+def test_a_valid_max_tips_a_borderline_mean_but_cannot_make_alert_alone():
+    assert assess(6.5, 10.0).status is Status.WARNING
+    tipped = assess(6.5, 10.0, delta_t_max=9.0, max_validity=1.0)
+    assert tipped.utilities == {"SAFE": 0.0, "WARNING": 0.45, "ALERT": 0.55} and tipped.status is Status.ALERT
+    alone = assess(0.5, 10.0, delta_t_max=12.0, max_validity=1.0)   # one satellite hot, the consensus quiet
+    assert alone.utilities == {"SAFE": 0.6, "WARNING": 0.0, "ALERT": 0.4} and alone.status is Status.SAFE
+
+
+def test_utilities_are_graded_when_the_two_views_disagree():
+    result = assess(4.0, 10.0, delta_t_max=10.0, max_validity=1.0)
+    assert result.utilities == {"SAFE": 0.0, "WARNING": 0.6, "ALERT": 0.4} and result.status is Status.WARNING
+
+
+def test_the_max_weighs_by_its_validity_and_drops_out_without_it():
+    plain = assess(6.5, 10.0)
+    assert assess(6.5, 10.0, delta_t_max=9.0, max_validity=0.0).utilities == plain.utilities
+    assert assess(6.5, 10.0, delta_t_max=None, max_validity=1.0).utilities == plain.utilities
+    assert assess(6.5, 10.0, delta_t_max=6.5, max_validity=1.0).utilities == plain.utilities   # max = mean: one view
+    half = assess(6.5, 10.0, delta_t_max=9.0, max_validity=0.5)
+    assert half.utilities["ALERT"] == 0.4375   # (0.6 x 0.25 + 0.2 x 1) / 0.8
+
+
+def test_the_environment_shifts_the_max_like_the_mean_and_adjust_records_both():
+    result = assess(6.5, 10.0, dry_z=2.5, sun_elevation_deg=30, delta_t_max=7.0, max_validity=0.8)
+    assert result.adjust["delta_t_max_k"] == 7.0 and result.adjust["delta_t_max_eff_k"] == 7.348
+    assert result.adjust["max_validity"] == 0.8 and result.adjust["max_weight"] == 0.348   # 0.32 / 0.92
+    assert {"max_low", "max_medium", "max_high"} <= set(result.memberships)
+    assert "strongest view 7.00 K" in result.reason
+
+
+def test_support_lifts_the_combined_alert_utility():
+    lifted = assess(6.5, 10.0, delta_t_max=9.0, max_validity=1.0, support={"viirs_support": 1.0})
+    assert lifted.utilities["ALERT"] == 0.625   # (0.55 + 0.2) / 1.2
+
+
+@pytest.mark.parametrize("bad", [nan, inf, -inf])
+def test_an_invalid_max_or_validity_is_ignored(bad):
+    plain = assess(6.5, 10.0)
+    assert assess(6.5, 10.0, delta_t_max=bad, max_validity=1.0).utilities == plain.utilities
+    assert assess(6.5, 10.0, delta_t_max=9.0, max_validity=bad).utilities == plain.utilities
+    assert assess(6.5, 10.0, delta_t_max=bad, max_validity=1.0).adjust == plain.adjust
+
+
 # ---------- state machine ----------
 
 def test_fsm_records_only_changes_and_ignores_old_observations():

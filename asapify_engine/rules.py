@@ -11,7 +11,16 @@ The satellites' thermal anomaly decides. The environment does not add weight of 
 SAFE, WARNING and ALERT are the low, medium and high memberships of ΔT_eff. With the default trapezoids and safety
 margin the status boundaries are ΔT_eff = 1.95 K (SAFE/WARNING) and 6.95 K (WARNING/ALERT), so a drier than normal
 night lowers both and the midday sun raises both, smoothly. Supporting data (VIIRS, NASA POWER) can only raise ALERT,
-and only when ΔT_eff already has a high membership.
+and only when the ALERT utility is already above zero.
+
+Two thermal attributes (fusion.py): the satellites' consensus, ΔT_mean (the clear-weighted mean of the views), and the
+strongest view, ΔT_max, with its validity v (0-1: the clear share of that view, 0 when it has no hot pixel). Both are
+normalised by the same shifted curves and combined as a weighted mean (MAUT):
+
+    U_s = (w_mean · μ_s(ΔT_mean_eff) + w_max · v · μ_s(ΔT_max_eff)) / (w_mean + w_max · v)
+
+so a strong anomaly one satellite sees is not averaged away, yet the max alone (weight 0.4 at most) never outweighs the
+consensus (0.6). With one view, v = 0 or ΔT_max = ΔT_mean, U_s is the membership of ΔT_mean, as before.
 
 Pure functions: no I/O, no AI, easy to unit-test. Every number in RuleConfig is an initial HYPOTHESIS, not validated
 yet: calibrate it with a backtest (tools/backtest_rules.py). A utility says how well the conditions match a status; it
@@ -51,6 +60,8 @@ class RuleConfig:
     cloud_max: float = 60.0                              # %; above this the region is NO_OBSERVABLE
     safety_margin: float = 0.05                          # utilities this close: take the more severe status
     cooldown: timedelta = timedelta(hours=24)            # minimum gap between two automatic agent runs
+    mean_weight: float = 0.6                             # the satellites' consensus (clear-weighted mean ΔT)
+    max_weight: float = 0.4                              # the strongest valid view, times its validity (0-1)
     # Supporting data (VIIRS, NASA POWER) join the ALERT utility only when they say something; see fusion.py
     support_weights: dict[str, float] = field(default_factory=lambda: {"viirs_support": 0.2, "power_support": 0.1})
 
@@ -85,7 +96,8 @@ def _why(delta_t: float, eff: float, dry_z: float | None, d_rh: float, d_sun: fl
 
 def assess(delta_t: float | None, cloud: float | None, cfg: RuleConfig = RuleConfig(), *,
            dry_z: float | None = None, sun_elevation_deg: float | None = None,
-           support: dict[str, float] | None = None) -> Assessment:
+           support: dict[str, float] | None = None, delta_t_max: float | None = None,
+           max_validity: float | None = None) -> Assessment:
     """Inputs must already be canonical and usable; None means the input was missing or rejected.
 
     `dry_z` is the air's dryness anomaly against its normal (positive = drier); without it the curves stay put and the
@@ -104,12 +116,21 @@ def assess(delta_t: float | None, cloud: float | None, cfg: RuleConfig = RuleCon
     d_rh, d_sun = shifts(dry_z, sun_elevation_deg, cfg)
     eff = delta_t + d_rh - d_sun
     memberships = {name: trapezoid(eff, getattr(cfg, name)) for name in CURVES}
-    utilities = {status.value: round(memberships[name], 4) for name, status in CURVES.items()}
+    # the strongest view joins as a second attribute, by its validity; one view or v = 0 leaves the mean alone
+    delta_t_max, validity = valid_input(delta_t_max), valid_input(max_validity, 0.0, 1.0)
+    w_max = cfg.max_weight * validity if delta_t_max is not None and validity else 0.0
+    eff_max = delta_t_max + d_rh - d_sun if w_max else None
+    if w_max:
+        memberships.update({name.replace("delta_t", "max"): trapezoid(eff_max, getattr(cfg, name)) for name in CURVES})
+    total = cfg.mean_weight + w_max
+    utilities = {status.value: round((cfg.mean_weight * memberships[name]
+                                      + (w_max * memberships[name.replace("delta_t", "max")] if w_max else 0.0)) / total, 4)
+                 for name, status in CURVES.items()}
     extra = {k: min(max(v, 0.0), 1.0) for k, v in (support or {}).items()
              if k in cfg.support_weights and valid_input(v) is not None}
     if extra:
         memberships.update(extra)
-    high = memberships["delta_t_high"]
+    high = utilities[Status.ALERT.value]
     if extra and high > 0:
         boosted = (high + sum(cfg.support_weights[k] * v for k, v in extra.items())) / (
             1 + sum(cfg.support_weights[k] for k in extra))
@@ -128,4 +149,9 @@ def assess(delta_t: float | None, cloud: float | None, cfg: RuleConfig = RuleCon
     reason += "; " + _why(delta_t, eff, dry_z, d_rh, d_sun)
     adjust = {"delta_t_k": round(delta_t, 3), "dry_z": None if dry_z is None else round(dry_z, 2),
               "rh_shift_k": round(d_rh, 3), "sun_shift_k": round(d_sun, 3), "delta_t_eff_k": round(eff, 3)}
+    if w_max:
+        reason += (f"; strongest view {delta_t_max:.2f} K counted as {eff_max:.2f} K, weight "
+                   f"{w_max / total:.2f} (validity {validity:.2f})")
+        adjust.update({"delta_t_max_k": round(delta_t_max, 3), "delta_t_max_eff_k": round(eff_max, 3),
+                       "max_validity": round(validity, 3), "max_weight": round(w_max / total, 3)})
     return Assessment(chosen, utilities, {k: round(v, 4) for k, v in memberships.items()}, reason, adjust)

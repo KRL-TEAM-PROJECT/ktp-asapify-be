@@ -25,7 +25,7 @@ There are no personal subscriptions, inboxes or push messages.
 | Operator decision | Firestore transaction: decision, alert reservation, audit; a second decision is refused |
 | Telegram | The bot posts every published alert in the team's Telegram group(s); an operator links a group from the Admin page. No personal chats. Live: published alerts reach the linked group |
 | Cloud Run + GCS + Firestore + Artifact Registry | Live in `hack2skill-510921` since 9 Oct. Every merge to `main` that touches the API is tested and deployed by GitHub Actions (see [CLOUDSHELL.md](docs/CLOUDSHELL.md)). Firestore rules released 13 Oct (no direct browser access) |
-| Risk engine | Live: 65 peat regions, Himawari-9 + GK2A every 15 minutes (each satellite backs the other up; ΔT weighted by clear view), fuzzy curves shifted by the air's dryness against its NASA POWER normal and by the sun, VIIRS + NASA POWER as support, state machine, audit record per slot, hot pixels and nearby VIIRS per region, a day archive for the map's date picker. See [ENGINE.md](docs/ENGINE.md) |
+| Risk engine | Live: 65 peat regions, Himawari-9 + GK2A every 15 minutes (each satellite backs the other up; the clear-weighted mean and, since 17 Oct, the strongest valid view as two Fuzzy MAUT attributes), fuzzy curves shifted by the air's dryness against its two-year NASA POWER normal and by the sun, VIIRS + NASA POWER as support, state machine, audit record per slot, hot pixels and nearby VIIRS per region, a day archive for the map's date picker. See [ENGINE.md](docs/ENGINE.md) |
 | Himawari/GK2A decoding | In the engine (`asapify_engine/satellites.py`, satpy), checked against VIIRS on one night slot; the older `pipeline/` code was removed on 15 Oct and stays in git history ([ENGINE.md](docs/ENGINE.md) maps one to the other) |
 | ADK/Gemini agent | `geospatial_analyst` on Gemini Enterprise with `fetch_firms_data` (NASA FIRMS) and a visual check of two NASA GIBS images plus the weather at the hot pixel: automatic on entering ALERT (at most once per region in 24 hours) and the Re-verify button, YAML checked before it is stored, hard daily quota |
 | Cloud tests with real Firebase/Firestore/Telegram | Proven live: Google sign-in, 401/403, the private worker, satellite data on the map, and an operator publishing an alert that reached the Telegram group |
@@ -55,6 +55,22 @@ Statuses are `SAFE` < `WARNING` < `ALERT`, plus `NO_OBSERVABLE` (compact codes `
   scan slot in three is never rated (at most 96 a day). Until 16 Oct the worker `asapify-notify` also ran out of
   memory on some ticks (17 of 144 returned 503 in the 24 hours to 16 Oct 11:00 UTC); it was raised to 1 GiB on
   16 Oct (revision `asapify-notify-00021`). See ENGINE.md (Cost and limits).
+
+## Data sources
+
+| Data | Used for | Link |
+|---|---|---|
+| Himawari-9 (JMA), bands 7 and 13, via NOAA Open Data on AWS | Thermal anomaly and cloud, every 10-minute scan | [registry](https://registry.opendata.aws/noaa-himawari/) · [bucket](https://noaa-himawari9.s3.amazonaws.com) |
+| GEO-KOMPSAT-2A (KMA), SW038 and IR105, via NOAA Open Data on AWS | The second view of the same peat | [registry](https://registry.opendata.aws/noaa-gk2a-pds/) · [bucket](https://noaa-gk2a-pds.s3.amazonaws.com) |
+| NASA FIRMS, VIIRS NOAA-20 / NOAA-21 active fires | Support near a hot pixel and the agent's only tool | [FIRMS](https://firms.modaps.eosdis.nasa.gov/) · [API](https://firms.modaps.eosdis.nasa.gov/api/) |
+| NASA GIBS, VIIRS NOAA-20 corrected reflectance | The agent's two images (true colour, false colour SWIR) | [GIBS API docs](https://nasa-gibs.github.io/gibs-api-docs/) · [Worldview](https://worldview.earthdata.nasa.gov/) |
+| NASA POWER, hourly skin temperature and humidity | The humidity normal (dryness) and skin-temperature support | [POWER](https://power.larc.nasa.gov/) · [API docs](https://power.larc.nasa.gov/docs/services/api/) |
+| Open-Meteo (CC BY 4.0) | Humidity fallback and the weather at the hot pixel for the agent | [open-meteo.com](https://open-meteo.com/) |
+| KHG peat hydrological units (KLHK) | The 65 peat regions (`tools/khg/`, built by `tools/build_regions.py`) | shapefile in this repository |
+| Gemini on Gemini Enterprise Agent Platform (formerly Vertex AI), Agent Development Kit | The verification agent | [Agent Platform](https://docs.cloud.google.com/gemini-enterprise-agent-platform/) · [ADK](https://google.github.io/adk-docs/) |
+| Telegram Bot API | Posting published alerts in the group | [Bot API](https://core.telegram.org/bots/api) |
+
+Live app: https://hack2skill-510921.web.app · frontend: `KRL-TEAM-PROJECT/ktp-asapify-fe`.
 
 ## Local
 

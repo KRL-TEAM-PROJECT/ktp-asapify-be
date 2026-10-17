@@ -142,6 +142,18 @@ def test_one_satellite_or_disagreement_is_recorded_not_capped(views, flag, delta
     assert fused.quality is Quality.DEGRADED and flag in fused.flags and fused.delta_t == delta_t
 
 
+def test_two_views_keep_the_strongest_valid_one_beside_the_mean():
+    fused = fuse({"himawari9": view(9.0, True, cloud=0.1), "gk2a": view(3.0, True, cloud=0.55)},
+                 night=True, slot=NIGHT, centre=CENTRE)
+    assert fused.delta_t == 7.0 and fused.delta_t_max == 9.0 and fused.max_validity == 0.9   # Himawari's clear share
+    quiet_max = fuse({"himawari9": view(2.0), "gk2a": view(1.0)}, night=True, slot=NIGHT, centre=CENTRE)
+    assert quiet_max.delta_t_max == 2.0 and quiet_max.max_validity == 0.0   # no hot pixel: the max is noise
+    single = fuse({"himawari9": None, "gk2a": view(9.0, True)}, night=True, slot=NIGHT, centre=CENTRE)
+    assert single.delta_t_max is None and single.max_validity is None       # one view: the mean is that view
+    cloudy = fuse({"himawari9": view(9.0, True, cloud=0.8)}, night=True, slot=NIGHT, centre=CENTRE)
+    assert cloudy.delta_t_max is None
+
+
 def test_daytime_is_a_flag_not_a_lower_quality():
     fused = fuse({"himawari9": view(9.0, True), "gk2a": view(9.0, True)}, night=False, slot=DAY, centre=CENTRE)
     assert fused.quality is Quality.ACCEPTED and "daytime" in fused.flags and fused.delta_t == 9.0
@@ -226,6 +238,8 @@ def test_night_hotspot_both_satellites_see_enters_alert_and_requests_the_agent()
     assert doc["last_agent_at"] == "2026-10-11T18:20:00Z" and repo.meta_doc["geo_slot"] == "2026-10-11T18:10:00Z"
     record = repo.slots[rid][-1]
     assert record == doc["latest"] and record["night"] is True and record["inputs"]["delta_t_k"] == 8.75
+    assert record["inputs"]["delta_t_max_k"] == 9.0 and record["inputs"]["max_validity"] == 0.9
+    assert record["adjust"]["delta_t_max_k"] == 9.0 and set(record["utilities"]) == {"SAFE", "WARNING", "ALERT"}
     assert record["quality"] == {"thermal": "ACCEPTED", "relative_humidity": "ACCEPTED"}
     assert record["views"]["gk2a"]["max_anomaly_k"] == 8.5 and "two_satellites_agree" in record["flags"]
     assert repo.transitions[rid][0]["current"] == "ALERT"

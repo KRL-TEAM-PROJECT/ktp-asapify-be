@@ -245,8 +245,8 @@ def build_payload(region: Region, record: dict, trigger: str, now: datetime, ima
         "observation": {
             "observed_at": record["observed_at"], "rules_engine_status": record["status"],
             "reason": record.get("reason"), "utilities": record.get("utilities"), "night": record.get("night"),
-            **{k: inputs.get(k) for k in ("delta_t_k", "cloud_cover_pct", "relative_humidity_pct", "dry_z",
-                                          "dry_source", "hot_lat", "hot_lon")},
+            **{k: inputs.get(k) for k in ("delta_t_k", "delta_t_max_k", "max_validity", "cloud_cover_pct",
+                                          "relative_humidity_pct", "dry_z", "dry_source", "hot_lat", "hot_lon")},
             "delta_t_counted": record.get("adjust"),
             "satellites": {name: {k: view.get(k) for k in VIEW_KEYS} if view else None
                            for name, view in (record.get("views") or {}).items()},
