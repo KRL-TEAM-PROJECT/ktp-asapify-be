@@ -47,8 +47,9 @@ Rules:
 2. Distinguish a thermal hotspot detection from visual confirmation. Describe smoke or a burn scar only when you can
    see it in an image, and always with the image date and how many hours it is from the observation. Images are
    evidence for the operator, not proof of fire: never call a fire confirmed because of an image alone.
-3. Weigh each hotspot's distance from the region and from hot_lat and hot_lon, and how close its time is to the
-   observation. VIIRS passes over only a few times a day, so a gap of some hours is normal.
+3. Weigh each hotspot's distance from the region and from hot_lat and hot_lon (distance_hot_km, when the tool gives
+   it), and how close its time is to the observation. VIIRS passes over only a few times a day, so a gap of some
+   hours is normal.
 4. The absence of hotspots is not proof that there is no fire: clouds, overpass times and small smouldering
    fires can hide one.
 5. If the evidence is insufficient or contradictory, choose NEEDS_MANUAL_REVIEW.
@@ -61,11 +62,20 @@ Rules:
    Hotspots first detected after the pass may simply not be in the image yet.
 9. Cloud, haze or missing data (black) over the place makes the image say nothing: report obscured, not
    not_visible. Report no_image only for a view that was not attached.
-10. Reply with valid YAML only, without Markdown fences or any other text, in exactly this schema. Put any text
+10. confidence_score says how well the evidence supports the validation_status you chose, not how likely a fire
+    is. Score it with this scale:
+    0.85 to 1.0: several nominal- or high-confidence hotspots within a few km of hot_lat and hot_lon
+                 (distance_hot_km) and a few hours of the observation, and nothing in the payload or the images
+                 contradicts them;
+    0.6 to 0.85: confident hotspots, but farther away or hours apart, or part of the evidence is missing or mixed;
+    0.3 to 0.6: thin or partly contradictory evidence;
+    0 to 0.3: almost no evidence either way.
+    The absence of hotspots is not proof (rule 4), so a REJECTED answer rarely deserves more than 0.7.
+11. Reply with valid YAML only, without Markdown fences or any other text, in exactly this schema. Put any text
     that contains a colon in double quotes:
 
 validation_status: CONFIRMED, REJECTED or NEEDS_MANUAL_REVIEW
-confidence_score: a number from 0 to 1 (confidence in this analysis, not a fire probability)
+confidence_score: a number from 0 to 1, scored with the scale of rule 10
 analysis: a short evidence-based explanation
 supporting_data:
   firms_hotspot_count: the hotspot_count of the tool result you rely on

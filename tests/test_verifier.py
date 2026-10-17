@@ -80,6 +80,17 @@ def test_confirmed_verdict_backed_by_the_tool_is_kept():
     assert record["tool_calls"][0]["hotspot_count"] == 2 and record["region_status"] == "ALERT"
 
 
+def test_record_names_the_point_it_is_about():
+    assert analyze(fake_run(YAML_OK, [TOOL]))["location"] == {"lat": -2.51, "lon": 113.8, "point": "hot_pixel"}
+    quiet = {**RECORD, "views": {"himawari9": {**VIEW, "n_hot": 0}, "gk2a": None},
+             "inputs": {**RECORD["inputs"], "hot_lat": None, "hot_lon": None}}
+    assert verifier.location(REGION, quiet) == {"lat": -2.5, "lon": 113.75, "point": "region_centre"}
+    warm = {**quiet, "inputs": RECORD["inputs"]}   # a fire-like pixel below the hot threshold
+    assert verifier.location(REGION, warm)["point"] == "strongest_pixel"
+    cloudy = {**RECORD, "views": {"himawari9": {**VIEW, "cloud_fraction": 0.7}, "gk2a": {**VIEW, "n_hot": 0}}}
+    assert verifier.location(REGION, cloudy)["point"] == "strongest_pixel"   # the hot view was too cloudy to count
+
+
 def test_numbers_no_tool_returned_downgrade_to_manual_review():
     invented = analyze(fake_run(YAML_OK.replace("firms_hotspot_count: 2", "firms_hotspot_count: 9"), [TOOL]))
     assert invented["validation_status"] == "NEEDS_MANUAL_REVIEW" and invented["agent_validation_status"] == "CONFIRMED"
@@ -144,6 +155,14 @@ def test_tool_clamps_the_request_and_queries_only_the_region_under_review(monkey
     assert (key, source, day_range, first) == ("KEY", "VIIRS_NOAA20_NRT", 5, "2026-10-08")
     assert all(abs(a - b) < 0.001 for a, b in zip(bbox, REGION.bounds))
     assert result["hotspot_count"] == 1 and result["to"] == "2026-10-12T06:00:00Z"
+
+
+def test_tool_gives_each_hotspot_its_distance_to_the_hot_pixel(monkeypatch):
+    monkeypatch.setattr(firms, "fetch_firms", lambda *a: [row("2026-10-10", "0542")])
+    monkeypatch.setenv("FIRMS_MAP_KEY", "KEY")
+    near = verifier.fetch_firms_data(tool_context=Ctx({**state(), "point": {"lat": -2.51, "lon": 113.8}}))
+    assert near["hotspots"][0]["distance_hot_km"] == 0.0 and near["hotspots"][0]["distance_km"] > 5
+    assert "distance_hot_km" not in verifier.fetch_firms_data(tool_context=Ctx(state()))["hotspots"][0]
 
 
 def test_tool_hides_upstream_errors(monkeypatch):

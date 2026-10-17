@@ -106,7 +106,7 @@ def test_reason_and_adjust_explain_the_shift():
                              "delta_t_eff_k": 6.848}
     assert "ΔT 6.50 K counted as 6.85 K (air 2.5σ drier than normal +0.85 K, sun -0.50 K)" in result.reason
     plain = assess(6.5, 10.0)
-    assert plain.adjust["rh_shift_k"] == 0.0 and "no humidity anomaly" in plain.reason
+    assert plain.adjust["rh_shift_k"] == 0.0 and "dryness unavailable" in plain.reason
     assert set(plain.memberships) == {"delta_t_low", "delta_t_medium", "delta_t_high"}
 
 

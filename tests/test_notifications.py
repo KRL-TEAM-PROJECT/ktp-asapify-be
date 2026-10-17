@@ -63,6 +63,12 @@ def test_telegram_acceptance_is_plain_text_to_the_group(monkeypatch):
     assert 'photo' not in body and 'parse_mode' not in body and 'reply_markup' not in body
 
 
+def test_a_caption_ending_in_a_link_with_parameters_is_sent_whole():
+    from asapify_api.notification_delivery import text_message
+    caption = 'Hot pixel near Riau: https://www.google.com/maps?q=-2.5,113.8&z=10'
+    assert text_message({'text': caption, 'purpose': 'emergency'}).startswith(caption + '\n')
+
+
 def test_worker_requires_auth(monkeypatch):
     monkeypatch.setenv('NOTIFICATION_WORKER_URL', 'https://worker.run.app')
     monkeypatch.setenv('NOTIFICATION_TASK_CALLER', 'task@test')
@@ -270,6 +276,15 @@ def test_fanout_queues_one_job_per_group_and_records_the_summary():
     assert db.docs[SOURCE]['decision']['notifications'] == summary
     job = next(v for k, v in db.docs.items() if k.startswith('notification_jobs/'))
     assert job['channel'] == 'telegram_group' and job['text'] == '<b>WARNING</b>' and job['not_before'] == NOW
+
+
+def test_fanout_sends_the_full_text_when_the_alert_has_one():
+    db = fanout_db(1)
+    db.docs['alerts/A-test']['text'] = '<b>WARNING</b>\n\nCoordinates (hot pixel): 2.5100° S, 113.8000° E'
+    NotificationStore(db).fan_out('A-test')
+    job = next(v for k, v in db.docs.items() if k.startswith('notification_jobs/'))
+    assert job['text'].endswith('113.8000° E')
+    assert 'Coordinates (hot pixel)' in send.__globals__['text_message'](job)
 
 
 def test_resumed_fanout_skips_existing_and_never_resets_a_claimed_job():

@@ -88,7 +88,7 @@ def shifts(dry_z: float | None, sun_elevation_deg: float | None, cfg: RuleConfig
 
 
 def _why(delta_t: float, eff: float, dry_z: float | None, d_rh: float, d_sun: float) -> str:
-    air = ("no humidity anomaly" if dry_z is None else
+    air = ("dryness unavailable" if dry_z is None else
            f"air {abs(dry_z):.1f}σ {'drier' if dry_z >= 0 else 'wetter'} than normal {d_rh:+.2f} K")
     sun = f", sun {-d_sun:+.2f} K" if d_sun else ""
     return f"ΔT {delta_t:.2f} K counted as {eff:.2f} K ({air}{sun})"

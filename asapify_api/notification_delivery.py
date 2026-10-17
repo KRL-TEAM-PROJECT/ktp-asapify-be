@@ -19,6 +19,7 @@ class PlainText(HTMLParser):
 def text_message(job):
     parser = PlainText()
     parser.feed(job['text'])
+    parser.close()   # flushes text held back after a trailing '&' (a link like ...?q=1&z=10 would vanish without it)
     prefix = '[EXERCISE] ' if job['purpose'] == 'exercise' else ''
     body = prefix + ''.join(parser.parts).strip()
     return body[:1800] + '\nALERT is an indication, not a confirmed fire.'

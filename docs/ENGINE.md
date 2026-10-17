@@ -231,17 +231,32 @@ hypotheses until such ALERTs are checked against later VIIRS detections.
 
 - `asapify_agent/agent.py` defines `root_agent` (ADK `Agent`, name `geospatial_analyst`) with the instruction from
   design section 8 and one tool, `fetch_firms_data`. The tool reads the region from the session state, so the model
-  cannot query another area; it may only widen the time window (6-48 h) and the buffer (0-25 km).
+  cannot query another area; it may only widen the time window (6-48 h) and the buffer (0-25 km). Each hotspot it
+  returns carries `distance_km` (to the region centre) and, since 17 October 2026, `distance_hot_km` (to the hot pixel
+  under review), which the confidence scale refers to.
 - The payload is the slot record: status, utilities, ΔT, both satellites' views, cloud, humidity, day or night, the
   VIIRS/POWER support and the flags, plus what the attached images are and the weather at the hot pixel.
 - Triggers: automatic on the transition into ALERT, and the operator's Re-verify button
-  (`POST /api/v1/operator/regions/{id}/verify`, at most once per region per 5 minutes).
+  (`POST /api/v1/operator/regions/{id}/verify`, at most once per region per 5 minutes). An automatic request that
+  meets a used-up daily quota stays queued in `engine_meta/ingestion.agent_pending`, in order, and runs once the
+  quota resets (00:00 UTC); before 17 October 2026 it was dropped, so a region entering ALERT late in the UTC day could
+  go 24 hours without a verification. Any other failure is still recorded, not retried.
 - Limits in code and in the database, not only in the prompt: a hard daily quota taken in a Firestore transaction
-  before any model call (`AGENT_DAILY_QUOTA`, default 20), at most 3 tool calls and 4 model calls per run,
+  before any model call (`AGENT_DAILY_QUOTA`, default 20, per UTC day: it resets at 00:00 UTC = 07:00 UTC+7), at
+  most 3 tool calls and 4 model calls per run,
   1,280 output tokens per call, minimal thinking, a 44 s timeout, at most 15 hotspots shown to the model.
 - The YAML is parsed into `AgentVerdict`, then checked against what the tool really returned: the hotspot count and
   the highest brightness temperature must come from a tool result, and CONFIRMED needs at least one nominal- or
   high-confidence hotspot. Anything else is stored as NEEDS_MANUAL_REVIEW with the reason in `checks`.
+- **Confidence** (`confidence_score`, 0-1) is the model's own number, not computed by the backend, which only checks
+  its range. Since 17 October 2026 the instruction gives it a scale (rule 10): 0.85-1 several nominal- or
+  high-confidence hotspots within a few km and hours of the hot pixel and nothing contradicting them, 0.6-0.85 farther,
+  hours apart or mixed, 0.3-0.6 thin or partly contradictory, below 0.3 almost none; a REJECTED rarely above 0.7,
+  because no hotspot is not proof. The region page shows it beside the FIRMS numbers the backend did check. The VIIRS
+  I-4 channel saturates at about 367 K, so a `highest_brightness_temp` of 367 K is a pixel at the sensor's limit, not
+  a fire temperature.
+- Each verification records `location`: the point it is about (the slot's hot pixel, else its strongest fire-like
+  pixel, else the cell centre); the weather is fetched there and the Telegram message names it (NOTIFICATIONS.md).
 - **Visual check** (`imagery.py`, since 16 October 2026). Before the model runs, the backend fetches two NASA GIBS
   WMS images of the region plus about 11 km: VIIRS NOAA-20 true colour (smoke) and false colour M11-I2-I1 (burn
   scars, active fire, through thin smoke), both with the VIIRS thermal anomalies drawn on top, from the last daytime

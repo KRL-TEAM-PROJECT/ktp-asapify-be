@@ -11,9 +11,9 @@ from enum import Enum
 
 
 class Status(str, Enum):
-    SAFE = "SAFE"                    # low temperature anomaly and humid air
+    SAFE = "SAFE"                    # low counted thermal anomaly (dry air or the sun move the curves by 1 K at most)
     WARNING = "WARNING"              # medium anomaly: closer monitoring, no agent call
-    ALERT = "ALERT"                  # high anomaly and dry air: the verification agent runs
+    ALERT = "ALERT"                  # high anomaly: the verification agent runs
     NO_OBSERVABLE = "NO_OBSERVABLE"  # cloud / data gap. NOT "safe"
 
 

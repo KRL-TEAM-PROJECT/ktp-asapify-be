@@ -16,8 +16,9 @@ from asapify_engine.config import Settings
 from asapify_engine.geo import day_window, run_geo_cycle
 from asapify_engine.ingest import run_cycle
 from asapify_engine.regions import Region, load_regions
-from asapify_engine.verifier import MAX_TOOL_CALLS, AgentNotConfigured, QuotaExhausted, verify_region
+from asapify_engine.verifier import MAX_TOOL_CALLS, AgentNotConfigured, QuotaExhausted, location, verify_region
 
+from .alert_text import alert_details, alert_text, public_origin
 from .auth import require_operator
 from .core import ApiProblem, DecisionInput, as_time, iso, utc_now
 from .notification_store import get_notification_store
@@ -49,6 +50,13 @@ def _region(region_id: str) -> Region:
     return region
 
 
+def _located(region: Region, verification: dict, slot: dict | None) -> dict:
+    """Verifications stored before 17 Oct 2026 have no `location`: take it from the slot under review when known."""
+    if verification.get("location") or not slot:
+        return verification
+    return {**verification, "location": location(region, slot)}
+
+
 def _day(value: str) -> str:
     try:
         date.fromisoformat(value)
@@ -76,10 +84,14 @@ def region(region_id: RegionID, hours: int = Query(24, ge=1, le=72),
            day: str | None = Query(None, alias="date", pattern=DAY), repo=Depends(get_engine_repo)):
     """State, the slots of the last `hours` up to the latest one (4 reads an hour; at most 6 an hour, so 432) and
     POWER support; with `date`, the slots of that WIB day instead (at most 144 reads)."""
-    _region(region_id)
+    region = _region(region_id)
     detail = repo.region_detail(region_id, hours, day_window(_day(day)) if day else None)
     if detail is None:
         raise ApiProblem(503, "DATA_NOT_READY", "This region has not been processed yet.")
+    origin, slots = public_origin(), {s.get("observed_at"): s for s in detail.get("slots") or []}
+    for verification in detail.get("verifications") or []:   # what the bot adds under the caption, for the preview
+        located = _located(region, verification, slots.get(verification.get("observed_at")))
+        verification["telegram_details"] = alert_details(region, located, origin)
     return detail
 
 
@@ -129,7 +141,8 @@ def verify(region_id: RegionID, actor=Depends(require_operator), repo=Depends(ge
     except AgentNotConfigured:
         raise ApiProblem(503, "INTEGRATION_NOT_READY", "The verification agent is not configured yet.")
     except QuotaExhausted:
-        raise ApiProblem(429, "AGENT_QUOTA_EXHAUSTED", "Today's agent quota is used up. It resets at 00:00 UTC.")
+        raise ApiProblem(429, "AGENT_QUOTA_EXHAUSTED",
+                         "Today's agent quota is used up. It resets at 00:00 UTC (07:00 UTC+7).")
 
 
 class RegionDecision(DecisionInput):
@@ -159,6 +172,10 @@ def decision(region_id: RegionID, body: RegionDecision, actor=Depends(require_op
             raise ApiProblem(409, "ALREADY_DECIDED", "An operator has already decided on this verification.")
         if publish and verification.get("validation_status") == "REJECTED":
             raise ApiProblem(409, "VERIFICATION_REJECTED", "The agent rejected this indication. Verify again or reject it.")
+        if alert is not None:   # read inside the transaction, before the alert is created: the group gets the caption
+            slot = None if verification.get("location") or not verification.get("observed_at") else repo.get_slot(
+                region_id, verification["observed_at"])
+            alert["text"] = alert_text(body.caption, region, _located(region, verification, slot))   # + coordinates
 
     audit = {"region_id": region_id, "verification_id": body.verification_id, "operator_uid": actor["uid"]}
     try:

@@ -42,8 +42,12 @@ def cached(payload, seconds: int) -> JSONResponse:
     return JSONResponse(redact(payload), headers={'Cache-Control': f'public, max-age=60, s-maxage={seconds}'})
 
 
+FINAL_AFTER = timedelta(hours=1)   # the 23:40 and 23:50 WIB scans are rated by about 00:20-00:40 WIB
+
+
 def past(day: str | None) -> bool:
-    return bool(day) and day < (utc_now() + timedelta(hours=7)).date().isoformat()   # WIB days
+    """A WIB day is final, and cached for a day, only once its last slots were rated: from 01:00 WIB the next day."""
+    return bool(day) and day < (utc_now() + timedelta(hours=7) - FINAL_AFTER).date().isoformat()
 
 
 @router.get('/regions')

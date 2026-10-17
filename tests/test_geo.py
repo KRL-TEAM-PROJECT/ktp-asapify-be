@@ -329,7 +329,7 @@ def test_an_invalid_humidity_is_recorded_as_missing_and_shifts_nothing(rh):
     record = repo.docs[REGIONS[0].id]["latest"]
     assert record["inputs"]["relative_humidity_pct"] is None and record["quality"]["relative_humidity"] == "MISSING"
     assert record["inputs"]["dry_source"] is None and record["adjust"]["rh_shift_k"] == 0.0
-    assert "model_estimate" not in record["flags"] and "no humidity anomaly" in record["reason"]
+    assert "model_estimate" not in record["flags"] and "dryness unavailable" in record["reason"]
 
 
 def test_dryness_comes_from_power_and_falls_back_to_open_meteo():
@@ -454,6 +454,25 @@ def test_waiting_agent_runs_go_first_and_failures_are_not_retried():
     assert seen == [r.id for r in REGIONS] and repo.meta_doc["agent_pending"] == {}
     assert {"region": REGIONS[1].id, "error": "RuntimeError"} in later["errors"]
     assert later["agent_requests"] == []                          # still ALERT: no second request
+
+
+def test_a_used_up_quota_keeps_the_requests_for_after_the_reset():
+    from asapify_engine.verifier import QuotaExhausted
+    repo = FakeRepo()
+    hot = {"himawari9": everywhere(anomaly=9.0, hot=True), "gk2a": everywhere(anomaly=9.0, hot=True)}
+    cycle(repo, hot)                                              # no verifier configured: requests wait in meta
+    assert len(repo.meta_doc["agent_pending"]) == 3
+    tried = []
+
+    def full(region, request):
+        tried.append(region.id)
+        raise QuotaExhausted()
+
+    later = cycle(repo, hot, now=NIGHT + timedelta(minutes=30), verify=full)
+    assert tried == [REGIONS[0].id]                               # nothing ran, so the others were not tried either
+    assert len(repo.meta_doc["agent_pending"]) == 3 and {"region": REGIONS[0].id, "error": "QuotaExhausted"} in later["errors"]
+    done = cycle(repo, hot, now=NIGHT + timedelta(minutes=60), verify=lambda region, request: {"validation_status": "CONFIRMED"})
+    assert len(done["verified"]) == 3 and repo.meta_doc["agent_pending"] == {}
 
 
 def test_agent_runs_wait_when_the_time_budget_is_spent():

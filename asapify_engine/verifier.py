@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from . import firms, imagery, openmeteo
 from .config import Settings
+from .fusion import FusionConfig
 from .regions import PROVINCE_NAMES, Region
 
 if TYPE_CHECKING:
@@ -191,8 +192,9 @@ def fetch_firms_data(hours_window: int = 24, buffer_km: float = 10.0,
 
     Returns:
         hotspot_count, confident_count (nominal or high confidence), highest_brightness_temp_k, confidence_counts
-        and up to 15 hotspots sorted by fire radiative power, each with its distance to the region centre in km
-        and its time offset from the observation in hours.
+        and up to 15 hotspots sorted by fire radiative power, each with its distance to the region centre in km,
+        its distance to the hot pixel under review in km (distance_hot_km, when there is one) and its time offset
+        from the observation in hours.
     """
     state = tool_context.state   # the region comes from the backend: the model cannot choose another area
     region, observed_at, now = state["region"], _parse(state["observed_at"]), _parse(state["now"])
@@ -216,7 +218,12 @@ def fetch_firms_data(hours_window: int = 24, buffer_km: float = 10.0,
     except Exception as exc:   # never pass the message on: an HTTP error can carry the URL, and the URL has the key
         return {**query, "error": f"FIRMS unavailable ({type(exc).__name__})"}
     hotspots = [h for h in firms.normalize(rows) if start <= h["acq_ts"] <= end]
-    return {**query, **firms.summarize(hotspots, (region["lat"], region["lon"]), observed_at, EVIDENCE_LIMIT)}
+    summary = firms.summarize(hotspots, (region["lat"], region["lon"]), observed_at, EVIDENCE_LIMIT)
+    point = state.get("point")   # the hot pixel (or strongest pixel) under review, when the backend knows it
+    if point:
+        for h in summary["hotspots"]:
+            h["distance_hot_km"] = round(firms.distance_km(point["lat"], point["lon"], h["lat"], h["lon"]), 1)
+    return {**query, **summary}
 
 
 def limit_tool_calls(tool, args: dict, tool_context: ToolContext) -> dict | None:
@@ -274,12 +281,27 @@ def _evidence(verdict: AgentVerdict | None, found: list[dict]) -> list[dict]:
     return used.get("hotspots", [])
 
 
+def location(region: Region, record: dict) -> dict:
+    """The point a verification is about: the slot's hot pixel (the strongest one the satellites saw), else its
+    strongest fire-like pixel, else the region centre. The weather is fetched there and the Telegram message names it.
+
+    fusion.py takes the point from a hot view only when that view counted (a verdict and at least 40 % of the cell
+    clear); a hot pixel in a view too cloudy to count does not make the point a hot pixel."""
+    inputs = record.get("inputs") or {}
+    lat, lon = inputs.get("hot_lat"), inputs.get("hot_lon")
+    if lat is None or lon is None or (lat, lon) == (region.lat, region.lon):
+        return {"lat": region.lat, "lon": region.lon, "point": "region_centre"}
+    hot = any(view and view.get("n_hot") and view.get("max_anomaly_k") is not None
+              and 1 - view.get("cloud_fraction", 1.0) >= FusionConfig.min_clear
+              for view in (record.get("views") or {}).values())
+    return {"lat": lat, "lon": lon, "point": "hot_pixel" if hot else "strongest_pixel"}
+
+
 def gather(region: Region, record: dict, look: Look, weather: Weather) -> tuple[dict | None, dict | None]:
     """Imagery of the region and weather at the hot pixel, fetched at once; either may fail without stopping the run."""
     observed_at = _parse(record["observed_at"])
-    inputs = record.get("inputs") or {}
-    lat, lon = (inputs.get("hot_lat"), inputs.get("hot_lon"))
-    lat, lon = (lat, lon) if lat is not None and lon is not None else (region.lat, region.lon)
+    where = location(region, record)
+    lat, lon = where["lat"], where["lon"]
 
     def safe(fn, *args):
         try:
@@ -309,8 +331,10 @@ def analyze_region(region: Region, record: dict, now: datetime, *, trigger: str,
     """One agent run -> the verification record. Agent failures become NEEDS_MANUAL_REVIEW records; nothing raises."""
     settings = settings or Settings()
     look, weather = look or imagery.fetch, weather or openmeteo.fetch_weather
+    where = location(region, record)
     state = {"region": {"id": region.id, "lat": region.lat, "lon": region.lon, "bounds": list(region.bounds)},
-             "observed_at": record["observed_at"], "now": _iso(now), "tool_calls": 0}
+             "observed_at": record["observed_at"], "now": _iso(now), "tool_calls": 0,
+             "point": None if where["point"] == "region_centre" else {"lat": where["lat"], "lon": where["lon"]}}
     started = time.monotonic()
     text, results, usage, error = "", [], {}, None
     # 1) imagery and weather for the visual check, then the ADK loop bounded by call limits and a timeout
@@ -337,6 +361,7 @@ def analyze_region(region: Region, record: dict, now: datetime, *, trigger: str,
     return {
         "id": f"{now:%Y%m%dT%H%M%SZ}", "region_id": region.id, "trigger": trigger, "requested_by": actor,
         "at": _iso(now), "observed_at": record["observed_at"], "region_status": record["status"],
+        "location": where,
         "validation_status": verdict.validation_status if verdict and not checks else "NEEDS_MANUAL_REVIEW",
         "agent_validation_status": verdict.validation_status if verdict else None,
         "confidence_score": verdict.confidence_score if verdict else None,
