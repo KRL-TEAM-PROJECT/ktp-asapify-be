@@ -7,7 +7,7 @@ temperature and brightness temperature stay separate parameters).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from statistics import fmean, pstdev
 from typing import Iterable
@@ -58,20 +58,28 @@ def _calendar_distance(a: datetime, b: datetime) -> int:
     return min(gap, 365 - gap)
 
 
+# An earlier year's value is at least half a year older than the target. Inside a calendar window of a few weeks that
+# keeps the current season out and the previous ones in, also across the new year: for 3 January the window of a
+# year before runs from mid-December to mid-January. Comparing calendar years instead counted this December as its
+# own normal and left out last January (until 18 October 2026).
+EARLIER = timedelta(days=183)
+
+
 def build_baseline(target: Observation, history: Iterable[Observation], *, window_days: int = 15) -> Baseline:
     """Mean of usable earlier-year values with the same definition, UTC hour and calendar window as `target`."""
-    pool = [o.value for o in history
-            if o.usable and o.observed_at.year < target.observed_at.year
+    pool = [o for o in history
+            if o.usable and o.observed_at <= target.observed_at - EARLIER
             and (o.source, o.parameter, o.measurement_type, o.unit)
             == (target.source, target.parameter, target.measurement_type, target.unit)
             and o.observed_at.hour == target.observed_at.hour
             and _calendar_distance(o.observed_at, target.observed_at) <= window_days]
-    years = sorted({o.observed_at.year for o in history if o.observed_at.year < target.observed_at.year})
+    values = [o.value for o in pool]
+    years = sorted({o.observed_at.year for o in pool})
     span = f"{years[0]}-{years[-1]}" if years else "none"
     return Baseline(
         source=target.source, parameter=target.parameter, measurement_type=target.measurement_type, unit=target.unit,
-        mean=round(fmean(pool), 3) if pool else None, std=round(pstdev(pool), 3) if len(pool) > 1 else None,
-        samples=len(pool),
+        mean=round(fmean(values), 3) if values else None, std=round(pstdev(values), 3) if len(values) > 1 else None,
+        samples=len(values),
         description=f"UTC hour {target.observed_at.hour:02d}, ±{window_days} days of "
                     f"{target.observed_at:%m-%d}, years {span}")
 

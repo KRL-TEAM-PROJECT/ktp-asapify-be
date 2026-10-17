@@ -46,6 +46,19 @@ def test_baseline_uses_same_hour_and_calendar_window_of_earlier_years_only():
     assert anomaly(skin(310.0, T0), baseline) == 5.0
 
 
+def test_baseline_across_the_new_year_counts_the_seasons_before_and_never_the_current_one():
+    def season(year, value):   # 1 December of `year` to 31 January after it, 05 UTC
+        start = datetime(year, 12, 1, 5, tzinfo=UTC)
+        return [skin(value, start + timedelta(days=d)) for d in range(62)]
+    history = season(2024, 300.0) + season(2025, 300.0) + season(2026, 330.0)   # 2026: the season being rated
+    # 2 seasons x 31 days (32 in December 2024: the calendar window counts days of the year, and 2024 has 366)
+    late_december = build_baseline(skin(310.0, datetime(2026, 12, 31, 5, tzinfo=UTC)), history)
+    assert late_december.samples >= 62 and late_december.mean == 300.0   # last January counts
+    early_january = build_baseline(skin(310.0, datetime(2027, 1, 3, 5, tzinfo=UTC)), history)
+    assert early_january.samples >= 62 and early_january.mean == 300.0   # this December does not
+    assert "years 2024-2026" in early_january.description
+
+
 def test_anomaly_refuses_incompatible_measurements_and_thin_baselines():
     history = [skin(305.0, datetime(2025, 10, d, 5, tzinfo=UTC)) for d in range(1, 6)]
     thin = build_baseline(skin(310.0, T0), history)

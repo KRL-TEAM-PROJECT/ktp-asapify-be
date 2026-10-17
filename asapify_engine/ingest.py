@@ -114,12 +114,16 @@ def years_label(years: range) -> str:
 
 
 def refresh_baseline(region: Region, today: date, fetch_power: Fetch, now: datetime) -> dict:
-    """Skin temperature (`entries`) and humidity (`entries_rh`) normals; both come in the same POWER requests."""
+    """Skin temperature (`entries`) and humidity (`entries_rh`) normals; both come in the same POWER requests.
+
+    The history is the table's own dates one and two years earlier, plus the window either side. They are counted back
+    from the table's first day, so in early January (first day still in December) they are last December and the one
+    before, never the current one."""
     first, last = today - timedelta(days=RECENT_DAYS + 1), today + timedelta(days=AHEAD_DAYS)
     years = baseline_years(today)
     history: list[Observation] = []
-    for year in years:
-        start = _same_day(first, year) - timedelta(days=WINDOW_DAYS)
+    for back in range(BASELINE_YEARS, 0, -1):   # oldest first
+        start = _same_day(first, first.year - back) - timedelta(days=WINDOW_DAYS)
         end = start + (last - first) + timedelta(days=2 * WINDOW_DAYS)
         history += power.canonicalize(fetch_power(region.lat, region.lon, start, end), now)
     skin = [o for o in history if o.parameter == SKIN["parameter"]]

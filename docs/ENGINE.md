@@ -90,7 +90,12 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
 9. **Dryness from one source** (`ingest.py`, `geo.py`). The normal is NASA POWER's own climatology: humidity per
    region, UTC hour and ±15 calendar days over the two years before (five until 17 October 2026: a candidate for
    recent land cover, still under evaluation; 2 x 31 days keeps at least 30 samples per hour), built from the same requests as the skin
-   temperature baseline. Each published POWER hour gets `dry_z = (normal − humidity) / max(σ, 3 %)` against the
+   temperature baseline. "Before" means the same dates one and two years earlier, counted back from the table's
+   first day, and a value counts only if it is at least half a year older than the hour it rates (`EARLIER` in
+   `canonical.py`). Until 18 October 2026 the history was picked by calendar year, which broke across the new
+   year: a late-December window lost the January half of last season, in January the current December counted as
+   its own normal (pulling dryness towards 0), and 27-31 December had no normal at all once the year had turned.
+   Each published POWER hour gets `dry_z = (normal − humidity) / max(σ, 3 %)` against the
    normal of its own hour (so the daily cycle is not an anomaly), and the region's `power.dry_z` is the mean of the
    last 24 published hours. POWER is 2-3 days late, which suits a signal that lasts days. While POWER's dryness is
    older than 4 days, or POWER has no usable humidity in those hours, this hour's Open-Meteo humidity against

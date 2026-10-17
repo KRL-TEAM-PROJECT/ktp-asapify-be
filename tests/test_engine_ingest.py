@@ -222,6 +222,34 @@ def test_the_baseline_covers_the_two_years_before_and_a_five_year_table_is_rebui
     assert repo.baselines[REGIONS[0].id]["years"] == "2024-2025" and len(calls) == 1 + 2 + 1
 
 
+def test_the_humidity_normal_in_early_january_comes_from_the_seasons_before():
+    """On 2 January the table's first day is still in December. Its history is the two seasons before, so this
+    December's dry spell does not become its own normal, and last January is not left out (both until 18 Oct 2026)."""
+    now, frontier, calls = datetime(2027, 1, 2, 6, tzinfo=UTC), datetime(2026, 12, 30, 23, tzinfo=UTC), []
+
+    def fetch(lat, lon, start, end):
+        calls.append(start)
+        ts, rh = {}, {}
+        for t in hours(start, end):
+            key = f"{t:%Y%m%d%H}"
+            if t > frontier:
+                ts[key] = rh[key] = -999.0
+            else:   # this season is dry (68 %); the seasons before read 80 %
+                ts[key], rh[key] = 25.0, 68.0 if t > now - timedelta(days=90) else 80.0
+        return {"geometry": {"coordinates": [lon, lat, 10]}, "header": {"fill_value": -999.0, "sources": ["TEST"]},
+                "properties": {"parameter": {"TS": ts, "RH2M": rh}}}
+
+    repo = FakeRepo()
+    run_cycle(repo, REGIONS[:1], now, batch=1, fetch_power=fetch)
+    table = repo.baselines[REGIONS[0].id]
+    assert table["years"] == "2025-2026" and [s.isoformat() for s in calls[1:3]] == ["2024-12-13", "2025-12-13"]
+    # 2 January and 30 December: 2 seasons x 31 days at 80 % (one more in leap 2024), none of this season's 68 %
+    for key in ("010205", "123005"):
+        mean, std, samples = table["entries_rh"][key]
+        assert (mean, std) == (80.0, 0.0) and samples >= 62
+    assert repo.docs[REGIONS[0].id]["power"]["dry_z"] == 4.0   # (80 - 68) / the 3 % floor
+
+
 def test_idle_cycles_cost_one_probe_and_new_hours_wake_the_next_pass():
     repo = FakeRepo()
     assert tick(repo, batch=3)["regions"] == [r.id for r in REGIONS]
