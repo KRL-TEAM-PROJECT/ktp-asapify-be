@@ -39,7 +39,8 @@ def rerate(record: dict, centre: tuple[float, float], dry_z: float | None) -> st
     views = {name: view(v) for name, v in (record.get("views") or {}).items()}
     fused = fuse(views, night=bool(record.get("night")), slot=slot, centre=centre)
     return assess(fused.delta_t, fused.cloud_pct, dry_z=dry_z, sun_elevation_deg=record.get("sun_elevation_deg"),
-                  support=record.get("support") or {}).status.value
+                  support=record.get("support") or {}, delta_t_max=fused.delta_t_max,
+                  max_validity=fused.max_validity).status.value
 
 
 def main() -> None:

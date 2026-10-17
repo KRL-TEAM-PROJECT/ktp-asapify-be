@@ -96,11 +96,12 @@ def assess_slot(region: Region, views: dict[str, RegionThermal | None], slot: da
         result = Assessment(Status.NO_OBSERVABLE, {}, {}, _no_view_reason(views, fused, cfg))
     else:
         result = assess(fused.delta_t, fused.cloud_pct, cfg, dry_z=dry, sun_elevation_deg=elevation,
-                        support=fused.support)
+                        support=fused.support, delta_t_max=fused.delta_t_max, max_validity=fused.max_validity)
     record = {
         "observed_at": iso(slot), "night": night, "sun_elevation_deg": round(elevation, 1),
         "views": {name: v.summary() if v is not None else None for name, v in views.items()},
-        "inputs": {"delta_t_k": fused.delta_t, "cloud_cover_pct": fused.cloud_pct, "relative_humidity_pct": humidity,
+        "inputs": {"delta_t_k": fused.delta_t, "delta_t_max_k": fused.delta_t_max, "max_validity": fused.max_validity,
+                   "cloud_cover_pct": fused.cloud_pct, "relative_humidity_pct": humidity,
                    "dry_z": dry, "dry_source": dry_source, "hot_lat": fused.hot_lat, "hot_lon": fused.hot_lon},
         "support": fused.support, "viirs": list(fused.viirs),
         "quality": {"thermal": fused.quality.value, "relative_humidity": "ACCEPTED" if humidity is not None else "MISSING"},

@@ -206,7 +206,20 @@ def test_an_old_baseline_without_humidity_is_rebuilt_once():
     repo.meta_doc.pop("caught_up", None)
     repo.docs[REGIONS[0].id]["power"]["observed_at"] = "2026-10-10T00:00:00Z"   # behind again
     run_cycle(repo, REGIONS[:1], NOW, batch=1, fetch_power=power_fetch(25.5, 80.0, calls))
-    assert "entries_rh" in repo.baselines[REGIONS[0].id] and len(calls) == 1 + 5 + 1   # probe, 5 years, recent
+    assert "entries_rh" in repo.baselines[REGIONS[0].id] and len(calls) == 1 + 2 + 1   # probe, 2 years, recent
+
+
+def test_the_baseline_covers_the_two_years_before_and_a_five_year_table_is_rebuilt():
+    repo, calls = FakeRepo(), []
+    run_cycle(repo, REGIONS[:1], NOW, batch=1, fetch_power=power_fetch(25.5, 80.0))
+    table = repo.baselines[REGIONS[0].id]
+    assert table["years"] == "2024-2025"
+    assert all(e[2] >= 30 for e in table["entries"].values() if e)   # 2 years x 31 days: still >= 30 samples
+    table["years"] = "2021-2025"                                        # a table cached before the change
+    repo.meta_doc.pop("caught_up", None)
+    repo.docs[REGIONS[0].id]["power"]["observed_at"] = "2026-10-10T00:00:00Z"
+    run_cycle(repo, REGIONS[:1], NOW, batch=1, fetch_power=power_fetch(25.5, 80.0, calls))
+    assert repo.baselines[REGIONS[0].id]["years"] == "2024-2025" and len(calls) == 1 + 2 + 1
 
 
 def test_idle_cycles_cost_one_probe_and_new_hours_wake_the_next_pass():

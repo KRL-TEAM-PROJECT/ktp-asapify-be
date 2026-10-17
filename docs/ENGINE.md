@@ -45,7 +45,9 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    from different angles, so when one is under cloud the other still sees. ΔT is the mean of the satellites that see
    the region, each weighted by the clear share of its view: both count when both see, neither decides alone, and
    one is the backup when the other cannot see. Whether they agree (both hot within 8 km, or both quiet) is recorded
-   as quality and flags, not used as a cap.
+   as quality and flags, not used as a cap. Since 17 October 2026, when both see, the stronger view goes beside the
+   mean as `delta_t_max_k` with its validity `max_validity` (that view's clear share, 0 when it has no hot pixel), so
+   a hotspot one satellite sees strongly is not averaged away (item 8).
 5. **Quality.** ACCEPTED when both satellites agree, DEGRADED with one satellite or when they disagree; `daytime` is a
    flag. Since 16 October 2026 no view caps the status: day, night, one satellite or two all go through the same
    curves (below). Less than 40 % of the cell clear in both views is REJECTED: NO_OBSERVABLE, never SAFE.
@@ -66,13 +68,27 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    SAFE = low(ΔT_eff), WARNING = medium(ΔT_eff), ALERT = high(ΔT_eff)
    ```
 
+   Two thermal attributes since 17 October 2026 (Fuzzy MAUT). The mean is the satellites' consensus, the max the
+   strongest valid view; both go through the same shifted curves and are combined as a weighted mean:
+
+   ```
+   U_s = (0.6 · μ_s(ΔT_mean_eff) + 0.4 · v · μ_s(ΔT_max_eff)) / (0.6 + 0.4 · v)      v = max_validity, 0-1
+   ```
+
+   With one satellite, v = 0 or max = mean, U_s is the membership of the mean, as before. Otherwise the utilities are
+   graded: mean 6.5 K and max 9 K (v = 1) give WARNING 0.45, ALERT 0.55 (ALERT, where the mean alone gives WARNING);
+   mean 0.5 K and max 12 K give SAFE 0.6, ALERT 0.4 (SAFE: the max alone never decides). The weights
+   (`RuleConfig.mean_weight`, `max_weight`) are hypotheses; `tools/backtest_rules.py` re-rates stored slots with them.
+
    With the trapezoids and the 0.05 safety margin the status changes at ΔT_eff = 1.95 K (SAFE/WARNING) and 6.95 K
    (WARNING/ALERT). Air 2.5σ drier than normal lowers both by 0.85 K; the midday sun raises both by up to 1 K
    (reflected sunlight lifts the 3.9 µm channel). Neither shift exceeds 1 K, so dry air alone never makes ALERT.
-   The record's `adjust` keeps ΔT, both shifts and ΔT_eff, and the reason says them in words. The old humidity
-   weights (0.6/0.4) and the gate are gone.
+   The record's `adjust` keeps ΔT, both shifts and ΔT_eff (and, with two views, `delta_t_max_k`,
+   `delta_t_max_eff_k`, `max_validity` and the max's share `max_weight`), and the reason says them in words. The old
+   humidity weights (0.6/0.4) and the gate are gone.
 9. **Dryness from one source** (`ingest.py`, `geo.py`). The normal is NASA POWER's own climatology: humidity per
-   region, UTC hour and ±15 calendar days over the five years before, built from the same requests as the skin
+   region, UTC hour and ±15 calendar days over the two years before (five until 17 October 2026: a candidate for
+   recent land cover, still under evaluation; 2 x 31 days keeps at least 30 samples per hour), built from the same requests as the skin
    temperature baseline. Each published POWER hour gets `dry_z = (normal − humidity) / max(σ, 3 %)` against the
    normal of its own hour (so the daily cycle is not an anomaly), and the region's `power.dry_z` is the mean of the
    last 24 published hours. POWER is 2-3 days late, which suits a signal that lasts days. While POWER's dryness is

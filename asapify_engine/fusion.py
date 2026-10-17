@@ -2,7 +2,8 @@
 
 Himawari-9 (140.7 E) and GK2A (128.2 E) look at Sumatra and Kalimantan from different angles and overlap on purpose:
 when one is under cloud, the other still sees. ΔT for the rules is the mean of the satellites that see the region,
-weighted by how much of the cell each sees clear, so both count when both see and neither decides alone. Whether
+weighted by how much of the cell each sees clear, so both count when both see and neither decides alone; when both
+see, the strongest view (ΔT_max) and its validity go beside it as the rules' second attribute (rules.py). Whether
 they agree is recorded as quality and flags, for the record and the agent, not as a cap on the status. VIIRS (NASA
 FIRMS) and NASA POWER are supporting data: the latest value near the hotspot can raise the utilities, never lower
 them, because no hotspot is not proof of no fire (design document section 8, rule 4). Pure computation, no I/O.
@@ -43,6 +44,8 @@ class Fused:
     hot_lat: float | None
     hot_lon: float | None
     viirs: tuple[dict, ...] = ()   # VIIRS detections near the hot pixels, for the map (viirs_near)
+    delta_t_max: float | None = None    # the strongest view's anomaly when two satellites see; None with one view
+    max_validity: float | None = None   # 0-1: that view's clear share, 0 when it has no hot pixel (the max is noise)
 
 
 def solar_elevation_deg(ts: datetime, lat: float, lon: float) -> float:
@@ -123,7 +126,13 @@ def fuse(views: dict[str, RegionThermal | None], *, night: bool, slot: datetime,
     hot = {name: v for name, v in seen.items() if v.n_hot > 0}
     clear = {name: 1 - v.cloud_fraction for name, v in seen.items()}
     delta_t = sum(clear[name] * v.max_anomaly_k for name, v in seen.items()) / sum(clear.values())
+    # ... and the strongest view beside it, so a hotspot one satellite sees strongly is not averaged away; the rules
+    # weigh it by its validity (rules.py), so it never decides alone
+    delta_t_max = max_validity = None
     if len(seen) == 2:
+        strongest = max(seen, key=lambda name: seen[name].max_anomaly_k)
+        delta_t_max = seen[strongest].max_anomaly_k
+        max_validity = round(clear[strongest], 3) if seen[strongest].n_hot > 0 else 0.0
         h, g = seen["himawari9"], seen["gk2a"]
         agree = len(hot) == 0 or (
             len(hot) == 2 and distance_km(h.hot_lat, h.hot_lon, g.hot_lat, g.hot_lon) <= cfg.agree_km)
@@ -145,4 +154,5 @@ def fuse(views: dict[str, RegionThermal | None], *, night: bool, slot: datetime,
         # the map shows VIIRS beside every hot pixel; the support above stays at the strongest one
         near = viirs_near(rows, [(lat, lon)] + [(p[0], p[1]) for v in hot.values() for p in v.hot_pixels], slot, cfg)
     return Fused(round(delta_t, 3), cloud_pct, quality, tuple(flags),
-                 {k: v for k, v in support.items() if v is not None}, lat, lon, near)
+                 {k: v for k, v in support.items() if v is not None}, lat, lon, near,
+                 None if delta_t_max is None else round(delta_t_max, 3), max_validity)

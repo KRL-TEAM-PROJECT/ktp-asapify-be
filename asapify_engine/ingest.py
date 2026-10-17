@@ -22,7 +22,8 @@ from .models import RegionState, Status, Transition
 from .regions import Region
 
 RECENT_DAYS = 4        # POWER publishes about 2-3 days behind real time
-BASELINE_YEARS = 5     # the baseline uses the five years before the current one
+BASELINE_YEARS = 2     # the two years before the current one: recent land cover; 2 x 31 days >= MIN_SAMPLES per hour.
+                       # A candidate under evaluation (5 until 17 Oct 2026), not a final value
 WINDOW_DAYS = 15       # ± calendar days around the target date
 AHEAD_DAYS = 10        # the cached baseline table reaches this far ahead, so it is rebuilt about once a week
 SKIN = {"source": power.SOURCE, "parameter": "skin_temperature",
@@ -103,10 +104,18 @@ def baseline_table(history: list[Observation], first: date, last: date) -> dict[
     return entries
 
 
+def baseline_years(today: date) -> range:
+    return range(today.year - BASELINE_YEARS, today.year)
+
+
+def years_label(years: range) -> str:
+    return f"{years[0]}-{years[-1]}"
+
+
 def refresh_baseline(region: Region, today: date, fetch_power: Fetch, now: datetime) -> dict:
     """Skin temperature (`entries`) and humidity (`entries_rh`) normals; both come in the same POWER requests."""
     first, last = today - timedelta(days=RECENT_DAYS + 1), today + timedelta(days=AHEAD_DAYS)
-    years = range(today.year - BASELINE_YEARS, today.year)
+    years = baseline_years(today)
     history: list[Observation] = []
     for year in years:
         start = _same_day(first, year) - timedelta(days=WINDOW_DAYS)
@@ -114,7 +123,7 @@ def refresh_baseline(region: Region, today: date, fetch_power: Fetch, now: datet
         history += power.canonicalize(fetch_power(region.lat, region.lon, start, end), now)
     skin = [o for o in history if o.parameter == SKIN["parameter"]]
     humidity = [o for o in history if o.parameter == RH["parameter"]]
-    return {"first": first.isoformat(), "last": last.isoformat(), "years": f"{years[0]}-{years[-1]}",
+    return {"first": first.isoformat(), "last": last.isoformat(), "years": years_label(years),
             "window_days": WINDOW_DAYS, "entries": baseline_table(skin, first, last),
             "entries_rh": baseline_table(humidity, first, last), "built_at": iso(now)}
 
@@ -203,9 +212,9 @@ def process_region(repo: Repo, region: Region, last: str | None, now: datetime, 
     """One region, one write: new hourly POWER records and the region's `power` summary (the latest of them)."""
     today = now.date()
     start = today - timedelta(days=RECENT_DAYS)
-    # 1) baseline table, rebuilt only when the cached one no longer covers the recent window
+    # 1) baseline table, rebuilt only when the cached one no longer covers the recent window or other years
     table = repo.get_baseline(region.id)
-    if not table or "entries_rh" not in table or not (
+    if not table or "entries_rh" not in table or table.get("years") != years_label(baseline_years(today)) or not (
             table["first"] <= start.isoformat() and today.isoformat() <= table["last"]):
         table = refresh_baseline(region, today, fetch_power, now)
         repo.save_baseline(region.id, table)
