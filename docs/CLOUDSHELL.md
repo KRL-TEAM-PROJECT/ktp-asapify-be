@@ -152,7 +152,7 @@ Do not call it live before the deployment and those checks pass.
 
 ## 4. Verify accounts and data
 
-Open `/join` without signing in; it lists the Telegram groups that have an invite link. An admin
+Open `/join` without signing in; it lists the team's alert group and every Telegram group that has an invite link. An admin
 must check the UID/email in Firebase Authentication before using `tools/set_operator.py` to grant the
 operator role. The runner never grants a role to any user account automatically.
 

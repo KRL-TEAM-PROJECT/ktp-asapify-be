@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from asapify_api.app import app
 from asapify_api.auth import require_operator
 from asapify_api.notification_policy import key
+from asapify_api.notification_routes import TEAM_GROUP
 from asapify_api.notification_store import NotificationStore, get_notification_store
 from test_notifications import fanout_db
 
@@ -65,15 +66,41 @@ def test_nothing_is_linked_without_a_valid_code_in_a_group(store, message):
     assert store.groups() == []
 
 
-def test_the_join_page_lists_only_groups_with_an_invite_link(store):
+def test_the_join_page_lists_the_team_group_and_groups_with_an_invite_link(store):
     store.link_group(store.group_link({'email': 'op@example.test'}), '-1001', 'ASAPify Notified')
     c = client()
-    assert c.get('/api/v1/telegram/join').json() == []
+    assert c.get('/api/v1/telegram/join').json() == [TEAM_GROUP]   # before any invite link is saved
     gid = c.get('/api/v1/operator/telegram-groups').json()[0]['id']
     r = c.put(f'/api/v1/operator/telegram-groups/{gid}', json={'invite_url': INVITE})
     assert r.status_code == 200 and r.json()['invite_url'] == INVITE and 'chat_id' not in r.json()
     app.dependency_overrides.pop(require_operator)   # the join page is public
-    assert client().get('/api/v1/telegram/join').json() == [{'title': 'ASAPify Notified', 'invite_url': INVITE}]
+    assert client().get('/api/v1/telegram/join').json() == [
+        TEAM_GROUP, {'title': 'ASAPify Notified', 'invite_url': INVITE}]
+
+
+def test_a_group_saved_with_the_team_link_replaces_it_under_its_own_title(store):
+    store.link_group(store.group_link({'email': 'op@example.test'}), '-1001', 'ASAPify Notified')
+    store.set_invite(store.groups()[0]['id'], TEAM_GROUP['invite_url'])
+    assert client().get('/api/v1/telegram/join').json() == [
+        {'title': 'ASAPify Notified', 'invite_url': TEAM_GROUP['invite_url']}]
+
+
+@pytest.mark.parametrize('value, listed', [
+    ('https://t.me/+ZyXwVu987654', [{**TEAM_GROUP, 'invite_url': 'https://t.me/+ZyXwVu987654'}]),
+    ('', []), ('https://evil.example/+ZyXwVu987654', []),
+])
+def test_telegram_join_url_replaces_or_hides_the_team_group(store, monkeypatch, value, listed):
+    monkeypatch.setenv('TELEGRAM_JOIN_URL', value)
+    assert client().get('/api/v1/telegram/join').json() == listed
+
+
+def test_the_team_group_stays_listed_when_the_saved_links_cannot_be_read(store, monkeypatch):
+    def unreachable():
+        raise RuntimeError('firestore unavailable')
+    monkeypatch.setattr(store, 'join_links', unreachable)
+    assert client().get('/api/v1/telegram/join').json() == [TEAM_GROUP]
+    monkeypatch.setenv('TELEGRAM_JOIN_URL', '')   # nothing to fall back on: the error shows
+    assert client().get('/api/v1/telegram/join').status_code == 503   # the app's answer to an unexpected error
 
 
 @pytest.mark.parametrize('url', ['http://t.me/+AbCdEf123456', 'https://evil.example/+AbCdEf123456',

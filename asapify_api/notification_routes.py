@@ -21,6 +21,9 @@ router = APIRouter()
 HexID = Annotated[str, Path(pattern=r'^[a-f0-9]{64}$')]
 # A Telegram invite link (t.me/+code or t.me/joinchat/code) or a public group's t.me/<username>
 INVITE = r'^https://t\.me/(\+[A-Za-z0-9_-]{8,64}|joinchat/[A-Za-z0-9_-]{8,64}|[A-Za-z][A-Za-z0-9_]{4,31})$'
+# The team's alert group (one group for everyone, team decision of 15 October 2026; its link since 17 October).
+# TELEGRAM_JOIN_URL replaces the link, and an empty value takes the group off the join page.
+TEAM_GROUP = {'title': 'ASAPify alert group', 'invite_url': 'https://t.me/+dWeL0KTSkbYxOTE9'}
 
 
 def bot_username():
@@ -30,10 +33,27 @@ def bot_username():
     return username
 
 
+def team_group():
+    """The team's group for the join page, or None when TELEGRAM_JOIN_URL is empty or not a Telegram invite link."""
+    url = os.getenv('TELEGRAM_JOIN_URL', TEAM_GROUP['invite_url']).strip()
+    return {**TEAM_GROUP, 'invite_url': url} if re.fullmatch(INVITE, url) else None
+
+
 @router.get('/api/v1/telegram/join')
 def join(store=Depends(get_notification_store)):
-    """Public: the groups anyone may join to receive alerts. Nothing but titles and invite links."""
-    return store.join_links()
+    """Public: the groups anyone may join to receive alerts. Nothing but titles and invite links.
+
+    The team's group comes first even before an operator saves its invite link on the Admin page; a linked group saved
+    with the same link takes its place, under its own title. It needs no database, so it stays listed when the saved
+    links cannot be read."""
+    team = team_group()
+    try:
+        saved = store.join_links()
+    except Exception:
+        if team is None:
+            raise
+        saved = []
+    return ([team] if team and all(g['invite_url'] != team['invite_url'] for g in saved) else []) + saved
 
 
 LINKED = 'Linked. ASAPify will post its peat-fire alerts in this group.'
