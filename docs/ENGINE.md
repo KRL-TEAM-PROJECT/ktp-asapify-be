@@ -286,7 +286,11 @@ hypotheses until such ALERTs are checked against later VIIRS detections.
 - Operators publish or reject each verification with `POST /api/v1/operator/regions/{id}/decision`
   (`verification_id`, plus `caption` or `reason`). Publishing reuses the notification engine: one alert per
   verification, `purpose=emergency`, one message per linked Telegram group. A REJECTED verification
-  can only be rejected.
+  can only be rejected, and from 12 hours after its slot a verification can only be rejected too: an operator
+  verifies again to publish a current one. When Gemini CONFIRMED and nobody decided within 2 hours, the minute sweep
+  publishes the region's latest verification by itself while the region is still ALERT, with Gemini's draft under
+  a label that says no operator reviewed it (`asapify_api/publication.py`, `auto_publish.py`, docs/NOTIFICATIONS.md).
+  NEEDS_MANUAL_REVIEW stays with the operators.
 
 ### Try the agent locally
 

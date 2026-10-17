@@ -11,6 +11,7 @@ from asapify_api.auth import require_operator
 from asapify_api.engine_routes import get_engine_repo
 from asapify_engine.ingest import run_cycle
 from asapify_engine.regions import Region, load_regions
+from asapify_engine.repo import SUMMARY
 
 UTC = timezone.utc
 NOW = datetime(2026, 10, 13, 6, tzinfo=UTC)
@@ -138,19 +139,24 @@ class FakeRepo:
     def save_verification(self, region_id, record):
         self.verifications.setdefault(region_id, []).append(record)
         self.docs.setdefault(region_id, {"id": region_id}).update(
-            {"verification": {"id": record["id"], "at": record["at"], "decision": None,
-                              "validation_status": record["validation_status"]}, "last_agent_at": record["at"]})
+            {"verification": {**{k: record.get(k) for k in SUMMARY}, "decision": None}, "last_agent_at": record["at"]})
 
     def decide(self, region_id, verification_id, check, decision, audit, alert):
         record = next((v for v in self.verifications.get(region_id, []) if v["id"] == verification_id), None)
         if record is None:
             raise LookupError(verification_id)
-        check(record)
+        region = self.docs.get(region_id) or {}
+        check(record, region)
         record["decision"] = decision
+        if (region.get("verification") or {}).get("id") == verification_id:   # like FirestoreRepo: the brief follows
+            region["verification"]["decision"] = decision["action"]
         self.audit.append({**audit, **decision})
         if alert:
             self.alerts[alert["id"]] = alert
         return record
+
+    def alert_regions(self):
+        return [{**d, "id": rid} for rid, d in self.docs.items() if d.get("status") == "ALERT"]
 
 
 def tick(repo, celsius=25.5, humidity=80.0, batch=2, calls=None, now=NOW, frontier=FRONTIER):

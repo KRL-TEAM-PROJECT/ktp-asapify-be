@@ -12,7 +12,9 @@ from fastapi import APIRouter, Depends, Header, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .auth import require_admin, require_operator
-from .core import ApiProblem
+from .auto_publish import auto_publish
+from .core import ApiProblem, utc_now
+from .engine_routes import get_engine_repo
 from .notification_delivery import send
 from .notification_store import get_notification_store
 from .notification_tasks import enqueue_pending, get_tasks, require_worker
@@ -172,8 +174,28 @@ def dispatch(body: Dispatch, store=Depends(get_notification_store)):
     return {'processed': True, 'status': result['status']}
 
 
+def engine_repo_or_none():
+    """The engine's data for the automatic publication; without it the sweep still recovers the outbox."""
+    try:
+        return get_engine_repo()
+    except Exception:
+        return None
+
+
 @router.post('/_internal/notifications/sweep', dependencies=[Depends(require_worker)])
-def sweep(store=Depends(get_notification_store), tasks=Depends(get_tasks)):
+def sweep(store=Depends(get_notification_store), tasks=Depends(get_tasks), repo=Depends(engine_repo_or_none)):
+    """Every minute: settle interrupted sends, publish what nobody decided on in time (auto_publish.py), then finish
+    every fan-out and queue every pending job, the automatic alerts' included."""
     store.reconcile_uncertain()
+    published = None
+    if repo is not None:
+        try:   # a failure here must not stop the recovery below
+            sent = auto_publish(repo, utc_now())
+            published = len(sent)
+            for item in sent:   # structured lines for Cloud Logging: which alert went out without an operator
+                print(json.dumps({'severity': 'NOTICE', 'message': 'automatic publication', **item}), flush=True)
+        except Exception as exc:
+            print(json.dumps({'severity': 'ERROR', 'message': 'automatic publication failed',
+                              'error': type(exc).__name__}), flush=True)
     resumed = store.resume_fanouts()
-    return {'resumed': resumed, 'enqueued': enqueue_pending(store, tasks)}
+    return {'auto_published': published, 'resumed': resumed, 'enqueued': enqueue_pending(store, tasks)}

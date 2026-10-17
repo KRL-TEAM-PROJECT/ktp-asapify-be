@@ -33,7 +33,8 @@ def redact(value):
         if k in PRIVATE:
             continue
         if k == 'decision' and isinstance(v, dict):
-            v = {x: v.get(x) for x in ('action', 'at')}   # no caption, reason, alert id or delivery summary
+            # no caption, reason, alert id or delivery summary; `auto` (no operator, publication.py) names no one
+            v = {**{x: v.get(x) for x in ('action', 'at')}, **({'auto': True} if v.get('auto') else {})}
         out[k] = redact(v)
     return out
 

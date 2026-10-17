@@ -58,6 +58,12 @@ class FirestoreRepo:
     def get_states(self) -> dict[str, dict]:
         return {doc.id: doc.to_dict() for doc in self.regions.stream()}
 
+    def alert_regions(self) -> list[dict]:
+        """The regions whose current status is ALERT: what the automatic publication looks at every minute, usually a
+        handful of reads (a single-field equality, so Firestore's automatic index serves it)."""
+        return [{**s.to_dict(), "id": s.id}
+                for s in self.regions.where(filter=FieldFilter("status", "==", "ALERT")).stream()]
+
     def get_baseline(self, region_id: str) -> dict | None:
         doc = self.db.collection("engine_baselines").document(region_id).get()
         return doc.to_dict() if doc.exists else None
@@ -179,9 +185,10 @@ class FirestoreRepo:
         batch.set(ref, {"verification": verification_summary(record), "last_agent_at": record["at"]}, merge=True)
         batch.commit()
 
-    def decide(self, region_id: str, verification_id: str, check: Callable[[dict], None], decision: dict,
+    def decide(self, region_id: str, verification_id: str, check: Callable[[dict, dict], None], decision: dict,
                audit: dict, alert: dict | None) -> dict:
-        """Decision, audit entry and alert are atomic; a second decision on the same verification fails `check`."""
+        """Decision, audit entry and alert are atomic; a second decision on the same verification fails `check`, which
+        also sees the region as it is inside the transaction (the automatic publication needs it still ALERT)."""
         region_ref = self.regions.document(region_id)
         ref = region_ref.collection("verifications").document(verification_id)
 
@@ -192,7 +199,7 @@ class FirestoreRepo:
             if not snap.exists:
                 raise LookupError(verification_id)
             verification = snap.to_dict()
-            check(verification)
+            check(verification, region)
             tx.update(ref, {"decision": decision})
             if (region.get("verification") or {}).get("id") == verification_id:
                 tx.set(region_ref, {"verification": {"decision": decision["action"]}}, merge=True)
