@@ -231,11 +231,16 @@ hypotheses until such ALERTs are checked against later VIIRS detections.
 
 - `asapify_agent/agent.py` defines `root_agent` (ADK `Agent`, name `geospatial_analyst`) with the instruction from
   design section 8 and one tool, `fetch_firms_data`. The tool reads the region from the session state, so the model
-  cannot query another area; it may only widen the time window (6-48 h) and the buffer (0-25 km).
+  cannot query another area; it may only widen the time window (6-48 h) and the buffer (0-25 km). Each hotspot it
+  returns carries `distance_km` (to the region centre) and, since 17 October 2026, `distance_hot_km` (to the hot pixel
+  under review), which the confidence scale refers to.
 - The payload is the slot record: status, utilities, ΔT, both satellites' views, cloud, humidity, day or night, the
   VIIRS/POWER support and the flags, plus what the attached images are and the weather at the hot pixel.
 - Triggers: automatic on the transition into ALERT, and the operator's Re-verify button
-  (`POST /api/v1/operator/regions/{id}/verify`, at most once per region per 5 minutes).
+  (`POST /api/v1/operator/regions/{id}/verify`, at most once per region per 5 minutes). An automatic request that
+  meets a used-up daily quota stays queued in `engine_meta/ingestion.agent_pending`, in order, and runs once the
+  quota resets (00:00 UTC); before 17 October 2026 it was dropped, so a region entering ALERT late in the UTC day could
+  go 24 hours without a verification. Any other failure is still recorded, not retried.
 - Limits in code and in the database, not only in the prompt: a hard daily quota taken in a Firestore transaction
   before any model call (`AGENT_DAILY_QUOTA`, default 20, per UTC day: it resets at 00:00 UTC = 07:00 UTC+7), at
   most 3 tool calls and 4 model calls per run,

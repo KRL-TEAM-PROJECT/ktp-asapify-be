@@ -55,6 +55,15 @@ def test_a_past_day_is_cached_for_a_day(repo):
     assert c.get('/api/v1/public/days?month=2026-10').json()['days'][0]['alert'] is True
 
 
+def test_yesterday_is_final_only_once_its_last_slots_are_rated(monkeypatch):
+    from asapify_api import public_routes
+    from asapify_api.core import as_time
+    monkeypatch.setattr(public_routes, 'utc_now', lambda: as_time('2026-10-14T17:20:00Z'))   # 00:20 WIB on the 15th
+    assert not public_routes.past('2026-10-14')                    # its 23:50 slot may still be on its way
+    monkeypatch.setattr(public_routes, 'utc_now', lambda: as_time('2026-10-14T18:05:00Z'))   # 01:05 WIB
+    assert public_routes.past('2026-10-14') and not public_routes.past('2026-10-15')
+
+
 @pytest.mark.parametrize('method,path', [
     ('post', f'/api/v1/public/regions/{REGION.id}/verify'), ('post', f'/api/v1/public/regions/{REGION.id}/decision'),
     ('get', '/api/v1/public/agent'),

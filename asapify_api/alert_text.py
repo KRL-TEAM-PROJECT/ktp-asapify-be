@@ -35,17 +35,18 @@ def _slot(observed_at: str | None) -> str | None:
 
 
 def _firms(verification: dict) -> str | None:
-    """The FIRMS result the verdict relies on: its hotspot count, the confident ones and the search window."""
-    data = verification.get("supporting_data") or {}
-    count = data.get("firms_hotspot_count")
-    if count is None:
-        return None
+    """The FIRMS result the verdict relies on, with the area and time searched. Only numbers a tool call returned: a
+    count the model gave that no FIRMS result matches (the backend sends that to manual review) is left out."""
+    count = (verification.get("supporting_data") or {}).get("firms_hotspot_count")
     calls = [c for c in verification.get("tool_calls") or [] if not c.get("error")]
-    used = next((c for c in reversed(calls) if c.get("hotspot_count") == count), None)
-    if used is None or used.get("confident_count") is None:
-        return f"NASA FIRMS VIIRS: {count} hotspots"
-    window = f" within ±{used['hours_window']} h of the slot" if used.get("hours_window") else ""
-    return f"NASA FIRMS VIIRS: {count} hotspots ({used['confident_count']} nominal or high confidence){window}"
+    used = next((c for c in reversed(calls) if c.get("hotspot_count") == count), None) if count is not None else None
+    if used is None:
+        return None
+    confident = f" ({used['confident_count']} nominal or high confidence)" if used.get("confident_count") is not None else ""
+    area = (f" in the region and {used['buffer_km']:g} km around it" if used.get("buffer_km") is not None
+            else " in and around the region")
+    window = f", ±{used['hours_window']} h from the slot" if used.get("hours_window") else ""
+    return f"NASA FIRMS VIIRS: {count} hotspots{confident}{area}{window}"
 
 
 def alert_details(region: Region, verification: dict, origin: str | None = None) -> str:

@@ -22,6 +22,7 @@ from .ingest import DRY_SIGMA_FLOOR, Repo, iso, parse, region_doc, state_from_do
 from .models import Status
 from .regions import Region
 from .rules import Assessment, RuleConfig, assess, valid_input
+from .verifier import QuotaExhausted
 
 FIRST = timedelta(minutes=10)   # nothing is on the bucket sooner: Himawari ~12 min, GK2A ~22-24 min after the scan
 WAIT = timedelta(minutes=40)    # a slot only one satellite published is processed once it is this old
@@ -254,16 +255,22 @@ def run_geo_cycle(repo: Repo, regions: Iterable[Region], now: datetime | None = 
     def time_left() -> float:
         return float("inf") if budget_s is None else budget_s - (clock() - started)
 
+    quota_used = []   # set once the daily agent quota is used up: no further run is tried in this cycle
+
     def run_agents() -> None:
         for region_id, request in list(pending.items()):
-            if verify is None or time_left() < AGENT_RESERVE_S:
+            if verify is None or quota_used or time_left() < AGENT_RESERVE_S:
                 return
-            pending.pop(region_id)   # attempted once: the outcome (or the failure) is recorded, not retried
             try:
                 record = verify(by_id[region_id], request)
                 summary["verified"].append({"region": region_id, "validation_status": record.get("validation_status")})
-            except Exception as exc:   # e.g. the daily quota is used up
+            except QuotaExhausted:   # nothing ran: keep this request and the rest, in order, for after the reset
+                quota_used.append(region_id)
+                summary["errors"].append({"region": region_id, "error": "QuotaExhausted"})
+                return
+            except Exception as exc:   # any other failure is recorded, not retried
                 summary["errors"].append({"region": region_id, "error": type(exc).__name__})
+            pending.pop(region_id)   # attempted once: the outcome (or the failure) is recorded, not retried
 
     # 1) agent runs left over from earlier cycles go first: they are already late
     run_agents()

@@ -63,6 +63,12 @@ def test_telegram_acceptance_is_plain_text_to_the_group(monkeypatch):
     assert 'photo' not in body and 'parse_mode' not in body and 'reply_markup' not in body
 
 
+def test_a_caption_ending_in_a_link_with_parameters_is_sent_whole():
+    from asapify_api.notification_delivery import text_message
+    caption = 'Hot pixel near Riau: https://www.google.com/maps?q=-2.5,113.8&z=10'
+    assert text_message({'text': caption, 'purpose': 'emergency'}).startswith(caption + '\n')
+
+
 def test_worker_requires_auth(monkeypatch):
     monkeypatch.setenv('NOTIFICATION_WORKER_URL', 'https://worker.run.app')
     monkeypatch.setenv('NOTIFICATION_TASK_CALLER', 'task@test')

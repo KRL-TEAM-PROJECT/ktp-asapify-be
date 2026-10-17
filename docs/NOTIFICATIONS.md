@@ -32,7 +32,9 @@ any group whose invite link an operator saves (step 5 of "The Telegram group" be
    the region's status, the NASA FIRMS count the verdict rests on, and a link to the region page
    (`ASAPIFY_PUBLIC_ORIGIN`); the worker ends it with "ALERT is an indication, not a confirmed fire." The region
    detail returns the same lines as `telegram_details` on each verification, so the operator sees them under the
-   caption before publishing. Alerts saved before that day carry only the caption.
+   caption before publishing. Alerts saved before that day carry only the caption. The worker strips HTML from the
+   text with a parser it now also closes: until 17 October a caption ending in a link with parameters
+   (`...?q=1&z=10`) lost its text and only the closing line reached the group.
 6. A timeout or a dead process after the claim may mean Telegram already accepted it. The status becomes `unknown`;
    there is no automatic retry. The sweep marks `sending` older than 5 minutes as unknown. This avoids blind
    resends; it is **not an exactly-once guarantee**.

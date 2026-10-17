@@ -94,7 +94,7 @@ def test_the_group_gets_the_caption_with_coordinates_map_link_and_slot(repo, mon
         "Coordinates (hot pixel): 2.5100° S, 113.8000° E",
         "Map: https://www.google.com/maps?q=-2.5100,113.8000",
         "Satellite slot: 10 Oct 2026 13:00 UTC+7, status Alert",
-        "NASA FIRMS VIIRS: 2 hotspots (1 nominal or high confidence) within ±24 h of the slot",
+        "NASA FIRMS VIIRS: 2 hotspots (1 nominal or high confidence) in the region and 10 km around it, ±24 h from the slot",
         f"Details: https://asapify.example/regions/{REGION.id}",
     ]
 
@@ -107,6 +107,13 @@ def test_a_verification_without_location_takes_the_hot_pixel_of_its_slot(repo, m
     assert "Coordinates (hot pixel): 2.6000° S, 113.9000° E" in preview
     assert c.post(f"/api/v1/operator/regions/{REGION.id}/decision", json=body).status_code == 201
     assert "Coordinates (hot pixel): 2.6000° S, 113.9000° E" in repo.alerts[f"A-{REGION.id}-{vid}"]["text"]
+
+
+def test_a_hotspot_count_no_firms_result_matches_is_not_sent(monkeypatch):
+    from asapify_api.alert_text import alert_details
+    invented = {"observed_at": "2026-10-10T06:00:00Z", "supporting_data": {"firms_hotspot_count": 9},
+                "tool_calls": [{"hotspot_count": 2, "confident_count": 1, "hours_window": 24, "buffer_km": 10.0}]}
+    assert "FIRMS" not in alert_details(REGION, invented, "")
 
 
 def test_older_verifications_name_the_region_centre_and_no_origin_means_no_link(monkeypatch):
