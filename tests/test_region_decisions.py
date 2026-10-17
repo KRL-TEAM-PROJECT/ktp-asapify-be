@@ -1,4 +1,5 @@
 """Operator flow per region: Re-verify, agent quota, publish/reject and notification fan-out."""
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -7,7 +8,6 @@ from fastapi.testclient import TestClient
 from asapify_api import engine_routes
 from asapify_api.app import app
 from asapify_api.auth import require_operator
-from asapify_api.core import utc_now
 from asapify_api.engine_routes import get_engine_repo
 from asapify_engine.regions import PROVINCE_NAMES, load_regions
 from test_engine_ingest import FakeRepo
@@ -15,6 +15,7 @@ from test_notifications import count, fanout_db
 from test_verifier import RECORD, SETTINGS, TOOL, YAML_OK, fake_run
 
 REGION = load_regions()[0]
+NOW = datetime(2026, 10, 10, 6, 30, tzinfo=timezone.utc)   # half an hour after RECORD's slot: well inside 12 hours
 
 
 @pytest.fixture
@@ -24,6 +25,7 @@ def repo(monkeypatch):
     app.dependency_overrides[get_engine_repo] = lambda: repo
     app.dependency_overrides[require_operator] = lambda: {"uid": "op", "email": "operator@example.test"}
     monkeypatch.setattr(engine_routes, "Settings", lambda: SETTINGS)
+    monkeypatch.setattr(engine_routes, "utc_now", lambda: NOW)
     real = engine_routes.verify_region
     monkeypatch.setattr(engine_routes, "verify_region", lambda *a, **kw: real(
         *a, **{**kw, "settings": SETTINGS, "run": fake_run(YAML_OK, [TOOL], region=REGION)}))
@@ -47,7 +49,7 @@ def test_reverify_runs_the_agent_once_and_reports_the_quota(repo):
 
 
 def test_quota_exhausted_is_a_clear_429(repo):
-    repo.quota = {utc_now().date(): 2}
+    repo.quota = {NOW.date(): 2}
     r = client().post(f"/api/v1/operator/regions/{REGION.id}/verify")
     assert r.status_code == 429 and r.json()["error"]["code"] == "AGENT_QUOTA_EXHAUSTED"
 
@@ -167,3 +169,111 @@ def test_worker_cycles_pass_the_verifier_and_firms_only_when_configured(repo, mo
     assert seen["verify"] is None and seen["hotspots"] is None and seen["budget_s"] == 240
     assert client().post("/_internal/engine/tick?batch=20&budget=40").json() == {"power": True}
     assert power == {"batch": 20, "budget_s": 40}                 # POWER only supports: no agent from that cycle
+
+
+# ---------- time limits and the automatic publication (asapify_api/publication.py, auto_publish.py) ----------
+
+DECISION_URL = f"/api/v1/operator/regions/{REGION.id}/decision"
+
+
+def test_a_verification_12_hours_past_its_slot_cannot_be_published_but_can_be_rejected(repo, monkeypatch):
+    c, store, vid, body = published(repo, monkeypatch)
+    monkeypatch.setattr(engine_routes, "utc_now", lambda: datetime(2026, 10, 10, 18, 0, tzinfo=timezone.utc))
+    r = c.post(DECISION_URL, json=body)   # the slot was 06:00 UTC: 12 hours later the group would read old news
+    assert r.status_code == 409 and r.json()["error"]["code"] == "VERIFICATION_STALE"
+    reject = {"action": "reject", "reason": "too old; verified again", "verification_id": vid}
+    assert c.post(DECISION_URL, json=reject).status_code == 201 and not repo.alerts
+
+
+def test_the_region_detail_says_until_when_and_when_it_goes_out_by_itself(repo, monkeypatch):
+    c, store, vid, body = published(repo, monkeypatch)
+    v = c.get(f"/api/v1/operator/regions/{REGION.id}").json()["verifications"][0]
+    assert v["publish_until"] == "2026-10-10T18:00:00Z" and v["auto_publish_at"] == "2026-10-10T08:30:00Z"
+    repo.verifications[REGION.id][-1]["validation_status"] = "NEEDS_MANUAL_REVIEW"
+    v = c.get(f"/api/v1/operator/regions/{REGION.id}").json()["verifications"][0]
+    assert v["publish_until"] == "2026-10-10T18:00:00Z" and v["auto_publish_at"] is None   # only CONFIRMED goes out
+
+
+def run_auto(repo, monkeypatch, at):
+    from asapify_api.auto_publish import auto_publish
+    store = Mock()
+    store.fan_out.return_value = {"state": "outbox_saved", "groups": 1, "jobs": 1}
+    monkeypatch.setattr(engine_routes, "get_notification_store", lambda: store)
+    monkeypatch.setattr(engine_routes, "get_tasks", lambda: object())
+    monkeypatch.setattr(engine_routes, "enqueue_pending", lambda store, tasks: 1)
+    return auto_publish(repo, at), store
+
+
+def verified(repo, status="CONFIRMED"):
+    vid = client().post(f"/api/v1/operator/regions/{REGION.id}/verify").json()["id"]
+    repo.verifications[REGION.id][-1]["validation_status"] = status
+    repo.docs[REGION.id]["verification"]["validation_status"] = status
+    return vid
+
+
+def test_a_confirmed_verification_nobody_decided_goes_out_after_two_hours_marked_automatic(repo, monkeypatch):
+    monkeypatch.setenv("ASAPIFY_PUBLIC_ORIGIN", "https://asapify.example")
+    vid = verified(repo)
+    assert run_auto(repo, monkeypatch, NOW + timedelta(hours=1, minutes=59))[0] == []   # the operator's two hours
+    sent, store = run_auto(repo, monkeypatch, NOW + timedelta(hours=2))
+    alert_id = f"A-{REGION.id}-{vid}"
+    assert sent == [{"region_id": REGION.id, "verification_id": vid, "alert_id": alert_id}]
+    alert = repo.alerts[alert_id]
+    assert alert["auto"] is True and alert["published_by"] == "automatic"
+    assert alert["text"].startswith(
+        "[Automatic] Not yet reviewed by an ASAPify operator.\n\nThermal indication in Central Kalimantan\n\n"
+        "FIRMS shows hotspots near the region. This is a thermal indication; verify it in the field.\n\nRegion: ")
+    assert alert["text"].endswith(f"Details: https://asapify.example/regions/{REGION.id}")
+    decision = repo.verifications[REGION.id][-1]["decision"]
+    assert decision["auto"] is True and decision["by"] == "automatic" and repo.audit[-1]["operator_uid"] == "asapify-auto"
+    store.fan_out.assert_called_once_with(alert_id)
+    assert run_auto(repo, monkeypatch, NOW + timedelta(hours=3))[0] == []   # once
+    assert client().post(DECISION_URL, json={"action": "reject", "reason": "late", "verification_id": vid}).json()[
+        "error"]["code"] == "ALREADY_DECIDED"
+
+
+@pytest.mark.parametrize("status", ["NEEDS_MANUAL_REVIEW", "REJECTED"])
+def test_only_a_confirmed_verification_goes_out_by_itself(repo, monkeypatch, status):
+    verified(repo, status)
+    assert run_auto(repo, monkeypatch, NOW + timedelta(hours=3))[0] == [] and not repo.alerts
+
+
+def test_nothing_goes_out_by_itself_once_the_region_left_alert_or_an_operator_decided(repo, monkeypatch):
+    vid = verified(repo)
+    repo.docs[REGION.id]["status"] = "WARNING"
+    assert run_auto(repo, monkeypatch, NOW + timedelta(hours=3))[0] == []
+    with pytest.raises(engine_routes.ApiProblem) as refused:   # checked again inside the decision transaction
+        engine_routes.decide_verification(repo, REGION, vid, "publish", caption=None, reason=None,
+                                          actor={"uid": "asapify-auto", "email": "automatic"},
+                                          now=NOW + timedelta(hours=3), auto=True)
+    assert refused.value.code == "NOT_DUE" and not repo.alerts
+    repo.docs[REGION.id]["status"] = "ALERT"
+    assert client().post(DECISION_URL, json={"action": "reject", "reason": "smoke from a known burn",
+                                             "verification_id": vid}).status_code == 201
+    assert run_auto(repo, monkeypatch, NOW + timedelta(hours=3))[0] == [] and not repo.alerts
+
+
+def test_nothing_goes_out_by_itself_past_12_hours_from_its_slot(repo, monkeypatch):
+    verified(repo)
+    assert run_auto(repo, monkeypatch, NOW + timedelta(hours=11, minutes=30))[0] == [] and not repo.alerts
+
+
+def test_the_minute_sweep_publishes_what_is_due_and_recovers_without_engine_data(repo, monkeypatch):
+    from asapify_api import notification_routes
+    from asapify_api.notification_routes import engine_repo_or_none
+    from asapify_api.notification_store import get_notification_store
+    from asapify_api.notification_tasks import get_tasks, require_worker
+    vid = verified(repo)
+    store = Mock()
+    store.resume_fanouts.return_value = 1
+    store.pending.return_value = []
+    store.fan_out.return_value = {"state": "outbox_saved", "groups": 1, "jobs": 1}
+    monkeypatch.setattr(engine_routes, "get_notification_store", lambda: store)
+    monkeypatch.setattr(engine_routes, "get_tasks", lambda: object())
+    monkeypatch.setattr(notification_routes, "utc_now", lambda: NOW + timedelta(hours=2, minutes=1))
+    app.dependency_overrides.update({require_worker: lambda: None, get_notification_store: lambda: store,
+                                     get_tasks: lambda: object(), engine_repo_or_none: lambda: repo})
+    assert client().post("/_internal/notifications/sweep").json() == {"auto_published": 1, "resumed": 1, "enqueued": 0}
+    assert f"A-{REGION.id}-{vid}" in repo.alerts
+    app.dependency_overrides[engine_repo_or_none] = lambda: None   # no engine data: the outbox is still recovered
+    assert client().post("/_internal/notifications/sweep").json() == {"auto_published": None, "resumed": 1, "enqueued": 0}

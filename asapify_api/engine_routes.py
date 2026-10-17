@@ -23,6 +23,7 @@ from .auth import require_operator
 from .core import ApiProblem, DecisionInput, as_time, iso, utc_now
 from .notification_store import get_notification_store
 from .notification_tasks import enqueue_pending, get_tasks, require_worker
+from .publication import auto_caption, auto_publish_at, publish_until
 
 RegionID = Annotated[str, Path(pattern=r"^R\d{1,2}\.\d{2}[NS]\d{2,3}\.\d{3}E$")]
 DAY = r"^\d{4}-\d{2}-\d{2}$"   # a WIB calendar day, YYYY-MM-DD
@@ -75,7 +76,7 @@ def regions(repo=Depends(get_engine_repo)):
         latest = doc.get("latest") or {}
         out.append({"id": r.id, "province": r.province, "lat": r.lat, "lon": r.lon, "bounds": list(r.bounds),
                     "peat_km2": r.peat_km2, **{k: doc.get(k) for k in SUMMARY},
-                    **{k: latest.get(k) for k in ("inputs", "quality", "reason", "flags", "night")}})
+                    **{k: latest.get(k) for k in ("inputs", "adjust", "quality", "reason", "flags", "night")}})
     return out
 
 
@@ -89,9 +90,13 @@ def region(region_id: RegionID, hours: int = Query(24, ge=1, le=72),
     if detail is None:
         raise ApiProblem(503, "DATA_NOT_READY", "This region has not been processed yet.")
     origin, slots = public_origin(), {s.get("observed_at"): s for s in detail.get("slots") or []}
-    for verification in detail.get("verifications") or []:   # what the bot adds under the caption, for the preview
+    for i, verification in enumerate(detail.get("verifications") or []):   # newest first
         located = _located(region, verification, slots.get(verification.get("observed_at")))
-        verification["telegram_details"] = alert_details(region, located, origin)
+        verification["telegram_details"] = alert_details(region, located, origin)   # what the bot adds, as a preview
+        until = publish_until(verification)   # publication.py: the 12-hour limit and the automatic one after 2 hours
+        verification["publish_until"] = iso(until) if until else None
+        when = auto_publish_at(verification) if i == 0 else None   # only a region's latest verification goes out
+        verification["auto_publish_at"] = iso(when) if when else None
     return detail
 
 
@@ -155,31 +160,53 @@ def decision(region_id: RegionID, body: RegionDecision, actor=Depends(require_op
     """Publish or reject one verification: once, audited, and publish needs a caption."""
     region = _region(region_id)
     body.validate_action()
-    publish, now = body.action == "publish", utc_now()
-    alert_id = f"A-{region_id}-{body.verification_id}"
-    result = {"action": body.action, "by": actor["email"], "at": iso(now),
-              "reason": None if publish else body.reason.strip(), "alert_id": alert_id if publish else None,
+    return decide_verification(repo, region, body.verification_id, body.action, caption=body.caption,
+                               reason=body.reason, actor=actor, now=utc_now())
+
+
+def decide_verification(repo, region: Region, verification_id: str, action: str, *, caption: str | None,
+                        reason: str | None, actor: dict, now, auto: bool = False) -> dict:
+    """One decision on one verification, by an operator or (`auto`) by the sweep of auto_publish.py.
+
+    The checks run inside the transaction, so a second decision fails whoever makes it. Publishing creates the alert,
+    then its outbox and Cloud Tasks; a failure there is resumed by the Scheduler sweep."""
+    publish = action == "publish"
+    alert_id = f"A-{region.id}-{verification_id}"
+    result = {"action": action, "by": actor["email"], "at": iso(now),
+              "reason": None if publish else reason.strip(), "alert_id": alert_id if publish else None,
               "notifications": {"state": "fanout_pending", "recipients": 0, "jobs": 0} if publish else None}
-    alert = {"id": alert_id, "region_id": region_id, "verification_id": body.verification_id,
-             "source_path": f"engine_regions/{region_id}/verifications/{body.verification_id}",
-             "province": region.province, "caption": body.caption, "published_by": actor["email"],
+    if auto:
+        result["auto"] = True   # no operator saw it: the UI and the group say so
+    alert = {"id": alert_id, "region_id": region.id, "verification_id": verification_id,
+             "source_path": f"engine_regions/{region.id}/verifications/{verification_id}",
+             "province": region.province, "caption": caption, "published_by": actor["email"],
              "published_at": iso(now), "status": "active",
              "notifications": result["notifications"], "purpose": "emergency",
-             "expires_at": iso(now + timedelta(hours=1)), "fanout": "pending"} if publish else None
+             "expires_at": iso(now + timedelta(hours=1)), "fanout": "pending",
+             **({"auto": True} if auto else {})} if publish else None
 
-    def check(verification: dict) -> None:
+    def check(verification: dict, region_doc: dict | None = None) -> None:
         if verification.get("decision"):
-            raise ApiProblem(409, "ALREADY_DECIDED", "An operator has already decided on this verification.")
+            raise ApiProblem(409, "ALREADY_DECIDED", "This verification was already decided, by an operator or automatically.")
         if publish and verification.get("validation_status") == "REJECTED":
             raise ApiProblem(409, "VERIFICATION_REJECTED", "The agent rejected this indication. Verify again or reject it.")
+        until = publish_until(verification)
+        if publish and until is not None and now >= until:
+            raise ApiProblem(409, "VERIFICATION_STALE",
+                             "This verification is more than 12 hours past its slot. Verify again to publish a current alert.")
+        if auto:   # still due: confirmed, nobody decided for 2 hours, and the region is still ALERT
+            when = auto_publish_at(verification)
+            if when is None or now < when or (region_doc or {}).get("status") != "ALERT":
+                raise ApiProblem(409, "NOT_DUE", "This verification is not due for automatic publication.")
+            alert["caption"] = auto_caption(region, verification)
         if alert is not None:   # read inside the transaction, before the alert is created: the group gets the caption
             slot = None if verification.get("location") or not verification.get("observed_at") else repo.get_slot(
-                region_id, verification["observed_at"])
-            alert["text"] = alert_text(body.caption, region, _located(region, verification, slot))   # + coordinates
+                region.id, verification["observed_at"])
+            alert["text"] = alert_text(alert["caption"], region, _located(region, verification, slot))   # + coordinates
 
-    audit = {"region_id": region_id, "verification_id": body.verification_id, "operator_uid": actor["uid"]}
+    audit = {"region_id": region.id, "verification_id": verification_id, "operator_uid": actor["uid"]}
     try:
-        repo.decide(region_id, body.verification_id, check, dict(result), audit, alert)
+        repo.decide(region.id, verification_id, check, dict(result), audit, alert)
     except LookupError:
         raise ApiProblem(404, "NOT_FOUND", "Verification not found.")
     if publish:

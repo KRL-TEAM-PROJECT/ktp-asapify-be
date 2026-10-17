@@ -406,6 +406,7 @@ def test_every_slot_is_archived_in_its_wib_day_with_hot_pixels_and_viirs():
     slot = json.loads(day["slots"]["0110"])
     assert slot["at"] == "2026-10-11T18:10:00Z" and slot["satellites"] == ["himawari9", "gk2a"]
     assert slot["status"] == "AAA" and slot["delta_t"] == [8.8, 8.8, 8.8] and "trimmed" not in slot
+    assert slot["delta_t_eff"] == [8.8, 8.8, 8.8] and slot["delta_t_max_eff"] == [9.0, 9.0, 9.0]   # what was rated
     first = slot["hot"][REGIONS[0].id]
     assert first["himawari9"] == [[-1.0, 113.75, 9.0], [-1.01, 113.76, 7.0]] and first["gk2a"] == []
     assert first["view"] == "two_satellites_agree"
@@ -417,6 +418,21 @@ def test_every_slot_is_archived_in_its_wib_day_with_hot_pixels_and_viirs():
     assert json.loads(day["slots"]["0120"])["status"] == "SSS"
     assert archive_key(datetime(2026, 10, 11, 16, 50, tzinfo=UTC)) == ("2026-10-11", "2350")
     assert day_window("2026-10-12") == ("2026-10-11T17:00:00Z", "2026-10-12T17:00:00Z")
+
+
+def test_the_archive_keeps_delta_t_as_counted_beside_the_measured_one():
+    records = {
+        REGIONS[0].id: {"status": "ALERT", "inputs": {"delta_t_k": 5.81},   # dry air and two views: Alert below 6.95
+                        "adjust": {"delta_t_eff_k": 6.734, "delta_t_max_eff_k": 9.06, "max_weight": 0.36}},
+        REGIONS[1].id: {"status": "WARNING", "inputs": {"delta_t_k": 3.6}, "adjust": {"delta_t_eff_k": 2.65}},   # sun
+        REGIONS[2].id: {"status": "NO_OBSERVABLE", "inputs": {"delta_t_k": None}, "adjust": None},
+    }
+    slot = json.loads(archive_slot(NIGHT, ["himawari9"], tuple(REGIONS), records)["slots"]["0110"])
+    assert slot["delta_t"] == [5.8, 3.6, None] and slot["delta_t_eff"] == [6.7, 2.6, None]
+    assert slot["delta_t_max_eff"] == [9.1, None, None]
+    records[REGIONS[0].id]["adjust"] = {"delta_t_eff_k": 6.734}   # no view carried weight: no column of nulls
+    assert "delta_t_max_eff" not in json.loads(
+        archive_slot(NIGHT, ["himawari9"], tuple(REGIONS), records)["slots"]["0110"])
 
 
 def test_a_long_slot_loses_detail_but_never_a_status(monkeypatch):

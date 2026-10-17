@@ -11,6 +11,7 @@ from asapify_api.auth import require_operator
 from asapify_api.engine_routes import get_engine_repo
 from asapify_engine.ingest import run_cycle
 from asapify_engine.regions import Region, load_regions
+from asapify_engine.repo import SUMMARY
 
 UTC = timezone.utc
 NOW = datetime(2026, 10, 13, 6, tzinfo=UTC)
@@ -138,19 +139,24 @@ class FakeRepo:
     def save_verification(self, region_id, record):
         self.verifications.setdefault(region_id, []).append(record)
         self.docs.setdefault(region_id, {"id": region_id}).update(
-            {"verification": {"id": record["id"], "at": record["at"], "decision": None,
-                              "validation_status": record["validation_status"]}, "last_agent_at": record["at"]})
+            {"verification": {**{k: record.get(k) for k in SUMMARY}, "decision": None}, "last_agent_at": record["at"]})
 
     def decide(self, region_id, verification_id, check, decision, audit, alert):
         record = next((v for v in self.verifications.get(region_id, []) if v["id"] == verification_id), None)
         if record is None:
             raise LookupError(verification_id)
-        check(record)
+        region = self.docs.get(region_id) or {}
+        check(record, region)
         record["decision"] = decision
+        if (region.get("verification") or {}).get("id") == verification_id:   # like FirestoreRepo: the brief follows
+            region["verification"]["decision"] = decision["action"]
         self.audit.append({**audit, **decision})
         if alert:
             self.alerts[alert["id"]] = alert
         return record
+
+    def alert_regions(self):
+        return [{**d, "id": rid} for rid, d in self.docs.items() if d.get("status") == "ALERT"]
 
 
 def tick(repo, celsius=25.5, humidity=80.0, batch=2, calls=None, now=NOW, frontier=FRONTIER):
@@ -220,6 +226,34 @@ def test_the_baseline_covers_the_two_years_before_and_a_five_year_table_is_rebui
     repo.docs[REGIONS[0].id]["power"]["observed_at"] = "2026-10-10T00:00:00Z"
     run_cycle(repo, REGIONS[:1], NOW, batch=1, fetch_power=power_fetch(25.5, 80.0, calls))
     assert repo.baselines[REGIONS[0].id]["years"] == "2024-2025" and len(calls) == 1 + 2 + 1
+
+
+def test_the_humidity_normal_in_early_january_comes_from_the_seasons_before():
+    """On 2 January the table's first day is still in December. Its history is the two seasons before, so this
+    December's dry spell does not become its own normal, and last January is not left out (both until 18 Oct 2026)."""
+    now, frontier, calls = datetime(2027, 1, 2, 6, tzinfo=UTC), datetime(2026, 12, 30, 23, tzinfo=UTC), []
+
+    def fetch(lat, lon, start, end):
+        calls.append(start)
+        ts, rh = {}, {}
+        for t in hours(start, end):
+            key = f"{t:%Y%m%d%H}"
+            if t > frontier:
+                ts[key] = rh[key] = -999.0
+            else:   # this season is dry (68 %); the seasons before read 80 %
+                ts[key], rh[key] = 25.0, 68.0 if t > now - timedelta(days=90) else 80.0
+        return {"geometry": {"coordinates": [lon, lat, 10]}, "header": {"fill_value": -999.0, "sources": ["TEST"]},
+                "properties": {"parameter": {"TS": ts, "RH2M": rh}}}
+
+    repo = FakeRepo()
+    run_cycle(repo, REGIONS[:1], now, batch=1, fetch_power=fetch)
+    table = repo.baselines[REGIONS[0].id]
+    assert table["years"] == "2025-2026" and [s.isoformat() for s in calls[1:3]] == ["2024-12-13", "2025-12-13"]
+    # 2 January and 30 December: 2 seasons x 31 days at 80 % (one more in leap 2024), none of this season's 68 %
+    for key in ("010205", "123005"):
+        mean, std, samples = table["entries_rh"][key]
+        assert (mean, std) == (80.0, 0.0) and samples >= 62
+    assert repo.docs[REGIONS[0].id]["power"]["dry_z"] == 4.0   # (80 - 68) / the 3 % floor
 
 
 def test_idle_cycles_cost_one_probe_and_new_hours_wake_the_next_pass():
@@ -292,6 +326,7 @@ def test_operator_lists_regions_and_reads_one_with_its_slots(api):
     start = datetime(2026, 10, 11, 12, tzinfo=UTC)
     slots = [{"observed_at": f"{start + timedelta(minutes=10 * i):%Y-%m-%dT%H:%M:%SZ}", "status": "SAFE",
               "inputs": {"delta_t_k": 0.4}, "quality": {"thermal": "ACCEPTED"}, "flags": ["two_satellites_quiet"],
+              "adjust": {"delta_t_k": 0.4, "rh_shift_k": 0.3, "sun_shift_k": 0.0, "delta_t_eff_k": 0.7},
               "night": True, "reason": "SAFE has the highest utility (1.000)"} for i in range(30)]
     api.docs[known] = {"id": known, "status": "SAFE", "since": slots[0]["observed_at"],
                        "observed_at": slots[-1]["observed_at"], "utilities": {"SAFE": 1.0}, "latest": slots[-1],
@@ -302,6 +337,7 @@ def test_operator_lists_regions_and_reads_one_with_its_slots(api):
     assert len(listing) == len(load_regions())               # unprocessed regions are listed with status null
     item = next(i for i in listing if i["id"] == known)
     assert item["status"] == "SAFE" and item["flags"] == ["two_satellites_quiet"] and item["night"] is True
+    assert item["adjust"]["delta_t_eff_k"] == 0.7   # the map explains the status with the ΔT that was counted
     assert sum(1 for i in listing if i["status"] is None) == len(listing) - 1
     detail = c.get(f"/api/v1/operator/regions/{known}?hours=2").json()
     assert len(detail["slots"]) == 12 and detail["slots"][-1] == slots[-1] and len(detail["hours"]) == 2

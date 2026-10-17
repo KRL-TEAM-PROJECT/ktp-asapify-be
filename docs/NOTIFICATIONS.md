@@ -9,13 +9,24 @@ pointer to `/join`). It answers no questions.
 
 Status at the freeze (16 October 2026): live in `hack2skill-510921` (bot `@asapify_alert_bot`); published alerts
 reach the linked group. The group's invite link was not saved yet on 16 Oct (`GET /api/v1/telegram/join` returned
-`[]`); since 17 Oct the frontend's join page lists the team's group (https://t.me/+dWeL0KTSkbYxOTE9) by itself, and
-any group whose invite link an operator saves (step 5 of "The Telegram group" below) is added beside it.
+`[]`). Since 18 Oct the backend keeps the team's group link: the join endpoint lists "ASAPify alert group"
+(https://t.me/+dWeL0KTSkbYxOTE9, `TEAM_GROUP` in `asapify_api/notification_routes.py`) first, and any group whose
+invite link an operator saves (step 5 of "The Telegram group" below) after it. A saved group with the same link takes
+its place under its own title. `TELEGRAM_JOIN_URL` on `asapify-api` replaces the link; an empty value hides it. The
+frontend shows only what the endpoint returns.
 
 ## Flow and guarantees
 
 1. The operator chooses Publish after the agent's verification. One Firestore transaction saves the decision, the
    audit entry and the alert (`fanout: pending`). After the commit, the API writes one job per linked group.
+   Two time limits (since 18 October 2026, `asapify_api/publication.py`): a verification can be published until
+   12 hours after the slot it reviewed (`VERIFICATION_STALE` after that; rejecting still works), and a verification
+   Gemini CONFIRMED that no operator decided on within 2 hours goes out by itself while its region is still ALERT.
+   The sweep does that every minute (`asapify_api/auto_publish.py`): it reads only the ALERT regions and publishes
+   their latest verification through the same transaction, as `automatic` (decision and alert carry `auto: true`),
+   with Gemini's draft under the first line "[Automatic] Not yet reviewed by an ASAPify operator.". NEEDS_MANUAL_REVIEW
+   and REJECTED never go out by themselves; whoever decides first wins, and the region detail gives each
+   verification's `publish_until` and, for the latest, `auto_publish_at`.
    Ids are deterministic and writes are `create`-only, so a retry or a concurrent run never duplicates a message or
    resets an already claimed job. No provider is called inside the transaction.
 2. The API tries to enqueue. A failed fan-out or enqueue never loses the decision; the response says
@@ -90,7 +101,8 @@ application's database rules.** The one index serves the outbox scan (`notificat
    logged as `telegram webhook` with an `outcome` (linked, already, no_code, bad_code, private, migrated) and never
    the code, chat id or text.
 5. The operator pastes the group's invite link (Telegram: group, Invite via link, copy) into the panel. The public
-   join page then shows a Join button for that group.
+   join page then shows a Join button for that group. The team's own group is listed before this step too (see the
+   status above).
 
 Only groups are linked, and only with an operator's code: adding the bot to another group, or writing to it
 privately, links nothing. The chat id stays on the server; operators see the title and can unlink the group. When
@@ -109,7 +121,7 @@ on `asapify-api` and `asapify-notify`.
 
 | Endpoint | Access / purpose |
 |---|---|
-| GET `/api/v1/telegram/join` | Public; title and invite link of every group that has one |
+| GET `/api/v1/telegram/join` | Public; the team's group, then the title and invite link of every group that has one |
 | GET `/api/v1/operator/telegram-groups` | Operator; linked groups (title, invite link), never the chat id |
 | POST `/api/v1/operator/telegram-groups/link` | Operator; one-time `startgroup` link, 10 minutes |
 | PUT `/api/v1/operator/telegram-groups/{id}` | Operator; set or clear the invite link (`https://t.me/+…`, `t.me/joinchat/…` or a public `t.me/<name>`) |
@@ -117,7 +129,7 @@ on `asapify-api` and `asapify-notify`.
 | GET `/api/v1/operator/alerts/{id}/deliveries` | Operator; each group's status, error and timestamps |
 | POST `/api/v1/notifications/telegram-webhook` | Webhook secret; links a group with an operator's code and answers `/start` and private messages in the webhook response |
 | POST `/_internal/notifications/dispatch` | Worker OIDC, body job_id |
-| POST `/_internal/notifications/sweep` | Scheduler OIDC; queue/unknown recovery |
+| POST `/_internal/notifications/sweep` | Scheduler OIDC, every minute; queue/unknown recovery, and the automatic publication of what nobody decided on in time |
 
 ## Official references
 

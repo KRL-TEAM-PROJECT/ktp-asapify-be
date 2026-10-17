@@ -90,7 +90,12 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
 9. **Dryness from one source** (`ingest.py`, `geo.py`). The normal is NASA POWER's own climatology: humidity per
    region, UTC hour and ±15 calendar days over the two years before (five until 17 October 2026: a candidate for
    recent land cover, still under evaluation; 2 x 31 days keeps at least 30 samples per hour), built from the same requests as the skin
-   temperature baseline. Each published POWER hour gets `dry_z = (normal − humidity) / max(σ, 3 %)` against the
+   temperature baseline. "Before" means the same dates one and two years earlier, counted back from the table's
+   first day, and a value counts only if it is at least half a year older than the hour it rates (`EARLIER` in
+   `canonical.py`). Until 18 October 2026 the history was picked by calendar year, which broke across the new
+   year: a late-December window lost the January half of last season, in January the current December counted as
+   its own normal (pulling dryness towards 0), and 27-31 December had no normal at all once the year had turned.
+   Each published POWER hour gets `dry_z = (normal − humidity) / max(σ, 3 %)` against the
    normal of its own hour (so the daily cycle is not an anomaly), and the region's `power.dry_z` is the mean of the
    last 24 published hours. POWER is 2-3 days late, which suits a signal that lasts days. While POWER's dryness is
    older than 4 days, or POWER has no usable humidity in those hours, this hour's Open-Meteo humidity against
@@ -142,7 +147,11 @@ Firestore stores no array inside an array). The baseline table in `engine_baseli
 - **Day archive.** Each slot also lands in `engine_days/{YYYY-MM-DD}`, one document per WIB calendar day, in the same
   batch: every region's status code (`S`, `W`, `A`, `N`; `-` = not assessed) and ΔT in `regions` order, plus the
   pixels (`[lat, lon, ΔBT]`) and VIIRS (`[lat, lon, minutes from the slot]`) of the regions with a hot pixel, as one
-  compact JSON string per slot under its WIB time `HHMM`.
+  compact JSON string per slot under its WIB time `HHMM`. ΔT comes twice since 18 October 2026: `delta_t` as
+  measured and `delta_t_eff` as the rules counted it after dry air and the sun, plus `delta_t_max_eff`, the
+  strongest view's counted value where it carried weight (left out of a slot where no region has one). The status
+  follows the counted values, so the map of a past day can say why a region was Alert with a measured ΔT below
+  6.95 K; days archived before have `delta_t` only.
   A slot is kept under 7,000 characters (pixels and VIIRS are cut first, then the weakest regions; `trimmed` says
   so), so a day stays under Firestore's 1 MiB. `alert` / `warning` mark the day for the calendar.
 - **Reads.** `GET /api/v1/operator/days?month=YYYY-MM` lists a month's days and the first and last day;
@@ -277,7 +286,11 @@ hypotheses until such ALERTs are checked against later VIIRS detections.
 - Operators publish or reject each verification with `POST /api/v1/operator/regions/{id}/decision`
   (`verification_id`, plus `caption` or `reason`). Publishing reuses the notification engine: one alert per
   verification, `purpose=emergency`, one message per linked Telegram group. A REJECTED verification
-  can only be rejected.
+  can only be rejected, and from 12 hours after its slot a verification can only be rejected too: an operator
+  verifies again to publish a current one. When Gemini CONFIRMED and nobody decided within 2 hours, the minute sweep
+  publishes the region's latest verification by itself while the region is still ALERT, with Gemini's draft under
+  a label that says no operator reviewed it (`asapify_api/publication.py`, `auto_publish.py`, docs/NOTIFICATIONS.md).
+  NEEDS_MANUAL_REVIEW stays with the operators.
 
 ### Try the agent locally
 

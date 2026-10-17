@@ -44,6 +44,12 @@ def test_the_map_and_a_region_need_no_sign_in_and_name_no_operator(repo):
     assert 'requested_by' not in verification and '@' not in detail.text
 
 
+def test_an_automatic_publication_says_so_publicly(repo):
+    repo.verifications[REGION.id][0]['decision'] = {**DECISION, 'by': 'automatic', 'auto': True}
+    verification = client().get(f'/api/v1/public/regions/{REGION.id}').json()['verifications'][0]
+    assert verification['decision'] == {'action': 'publish', 'at': '2026-10-15T01:00:00Z', 'auto': True}
+
+
 def test_public_detail_is_limited_to_24_hours(repo):
     assert client().get(f'/api/v1/public/regions/{REGION.id}?hours=72').status_code == 400
 
