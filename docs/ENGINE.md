@@ -78,7 +78,8 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    With one satellite, v = 0 or max = mean, U_s is the membership of the mean, as before. Otherwise the utilities are
    graded: mean 6.5 K and max 9 K (v = 1) give WARNING 0.45, ALERT 0.55 (ALERT, where the mean alone gives WARNING);
    mean 0.5 K and max 12 K give SAFE 0.6, ALERT 0.4 (SAFE: the max alone never decides). The weights
-   (`RuleConfig.mean_weight`, `max_weight`) are hypotheses; `tools/backtest_rules.py` re-rates stored slots with them.
+   (`RuleConfig.mean_weight`, `max_weight`) are hypotheses; `tools/backtest_rules.py` re-rates stored slots with them,
+   and the effect over the first day is under "Re-rating: the strongest view".
 
    With the trapezoids and the 0.05 safety margin the status changes at ΔT_eff = 1.95 K (SAFE/WARNING) and 6.95 K
    (WARNING/ALERT). Air 2.5σ drier than normal lowers both by 0.85 K; the midday sun raises both by up to 1 K
@@ -151,7 +152,8 @@ Firestore stores no array inside an array). The baseline table in `engine_baseli
 ## Validation: 11 October 2026, 18:10 UTC
 
 Done with the rules of that day (night-only ALERT, the smaller ΔT of two agreeing satellites). The rules and fusion of
-16 October have not been validated against VIIRS yet; `tools/backtest_rules.py` sets them beside the stored statuses.
+16 October have not been validated against VIIRS yet; `tools/backtest_rules.py` sets them beside the stored statuses
+(for the second attribute of 17 October see the next section).
 
 Night slot, both satellites decoded by this code and compared with NASA FIRMS VIIRS (NOAA-20, NOAA-21, S-NPP;
 nominal/high confidence within 90 minutes; 12,463 detections over Sumatra and Kalimantan):
@@ -171,6 +173,33 @@ regions without any VIIRS fire nearby (thin cirrus); the 3.9 µm test removed al
 of the peat pixels alone then found 10 regions with a hot pixel next to a VIIRS fire instead of 4, because most fire pixels sat
 just outside the simplified KHG polygons. One slot is not a calibration, and this was the only one done before the
 freeze: treat every number as a hypothesis.
+
+## Re-rating: the strongest view, 16-17 October 2026
+
+How much the second attribute (item 8, BE #20) changes: every slot record stored from 16 Oct 2026 15:07 UTC to
+17 Oct 15:07 UTC was fused again and rated twice with today's rules and the same dryness, once with the mean only
+and once with the mean and the strongest view. Read-only, run by the team on 17 October with ADC.
+
+| Mean only \ two attributes | SAFE | WARNING | ALERT | NO_OBSERVABLE |
+|---|---|---|---|---|
+| SAFE | 2,580 | 3 | 0 | 0 |
+| WARNING | 0 | 207 | 23 | 0 |
+| ALERT | 0 | 0 | 653 | 0 |
+| NO_OBSERVABLE | 0 | 0 | 0 | 1,474 |
+
+- 26 of 4,940 slots changed (0.75 % of the 3,466 rated ones), each one step up: 23 WARNING to ALERT, 3 SAFE to
+  WARNING, in 20 regions. None went down and clouds were untouched, as the formula intends.
+- In about 20 of the 26 the strongest view was about twice the mean: one satellite hot, the other close to 0 K.
+  That is the case the attribute was added for (a hotspot one satellite sees is no longer averaged away), and also
+  the one most open to a single-satellite false alarm. In the other 6 both satellites were hot and the mean, once
+  shifted, sat just under the WARNING/ALERT boundary (5.8-7.4 K measured).
+- Stored VIIRS support (a detection within 10 km and 12 hours of the hot pixel) was there in 4 of the 26 slots, POWER
+  skin-temperature support in 3; 19 had neither. Most changes fell between 00 and 10 UTC (day in Indonesia), and
+  VIIRS passes only a few times a day.
+
+So the second attribute is rare and only ever raises a status by one step, but most of the ALERTs it adds rest on
+one satellite without VIIRS. This compares two rule sets with each other, not with fires: the weights stay
+hypotheses until such ALERTs are checked against later VIIRS detections.
 
 ## Cost and limits (billing guardrails)
 
