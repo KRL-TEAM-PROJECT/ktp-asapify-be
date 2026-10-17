@@ -274,12 +274,23 @@ def _evidence(verdict: AgentVerdict | None, found: list[dict]) -> list[dict]:
     return used.get("hotspots", [])
 
 
+def location(region: Region, record: dict) -> dict:
+    """The point a verification is about: the slot's hot pixel (the strongest one the satellites saw), else its
+    strongest fire-like pixel, else the region centre. The weather is fetched there and the Telegram message names it."""
+    inputs = record.get("inputs") or {}
+    lat, lon = inputs.get("hot_lat"), inputs.get("hot_lon")
+    if lat is None or lon is None:
+        return {"lat": region.lat, "lon": region.lon, "point": "region_centre"}
+    hot = any((view or {}).get("n_hot") for view in (record.get("views") or {}).values())
+    point = "hot_pixel" if hot else "region_centre" if (lat, lon) == (region.lat, region.lon) else "strongest_pixel"
+    return {"lat": lat, "lon": lon, "point": point}
+
+
 def gather(region: Region, record: dict, look: Look, weather: Weather) -> tuple[dict | None, dict | None]:
     """Imagery of the region and weather at the hot pixel, fetched at once; either may fail without stopping the run."""
     observed_at = _parse(record["observed_at"])
-    inputs = record.get("inputs") or {}
-    lat, lon = (inputs.get("hot_lat"), inputs.get("hot_lon"))
-    lat, lon = (lat, lon) if lat is not None and lon is not None else (region.lat, region.lon)
+    where = location(region, record)
+    lat, lon = where["lat"], where["lon"]
 
     def safe(fn, *args):
         try:
@@ -337,6 +348,7 @@ def analyze_region(region: Region, record: dict, now: datetime, *, trigger: str,
     return {
         "id": f"{now:%Y%m%dT%H%M%SZ}", "region_id": region.id, "trigger": trigger, "requested_by": actor,
         "at": _iso(now), "observed_at": record["observed_at"], "region_status": record["status"],
+        "location": location(region, record),
         "validation_status": verdict.validation_status if verdict and not checks else "NEEDS_MANUAL_REVIEW",
         "agent_validation_status": verdict.validation_status if verdict else None,
         "confidence_score": verdict.confidence_score if verdict else None,

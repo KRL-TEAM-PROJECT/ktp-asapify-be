@@ -1,8 +1,9 @@
 """NASA POWER: the "normal" environment of each region, and the newest hours measured against it.
 
 POWER is reanalysis, 0.5 x 0.625 degrees and 2-3 days behind, so it does not set the status: Himawari-9 and GK2A do
-(geo.py). Its five-year climatology per region, UTC hour and calendar window is the normal that the rules shift their
-curves by. Every newly published hour gets its skin-temperature anomaly and its dryness `dry_z` (how many σ the
+(geo.py). Its climatology of the two years before (BASELINE_YEARS) per region, UTC hour and calendar window is the
+normal that the rules shift their curves by. Every newly published hour gets its skin-temperature anomaly and its
+dryness `dry_z` (how many σ the
 humidity is below that hour's normal); the region's `power` summary keeps the mean `dry_z` of the last 24 published
 hours and that day's humidity normal per hour, for the Open-Meteo fallback. Network access goes through injectable
 fetchers and storage through the Repo protocol, so the whole flow runs in tests without the internet or Firestore.

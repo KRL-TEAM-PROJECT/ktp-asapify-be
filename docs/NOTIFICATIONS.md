@@ -9,8 +9,8 @@ pointer to `/join`). It answers no questions.
 
 Status at the freeze (16 October 2026): live in `hack2skill-510921` (bot `@asapify_alert_bot`); published alerts
 reach the linked group. The group's invite link was not saved yet on 16 Oct (`GET /api/v1/telegram/join` returned
-`[]`), so the public join page shows no Join button until an operator saves it (step 5 of "The Telegram group"
-below).
+`[]`); since 17 Oct the frontend's join page lists the team's group (https://t.me/+dWeL0KTSkbYxOTE9) by itself, and
+any group whose invite link an operator saves (step 5 of "The Telegram group" below) is added beside it.
 
 ## Flow and guarantees
 
@@ -26,7 +26,13 @@ below).
    unexpired (one hour from publishing). A repeated or concurrent request that sees `sending` or a terminal result
    never sends again.
 5. The worker posts plain text with `sendMessage` (no photo, no HTML, no buttons). Telegram's answer means
-   `accepted`, not that a member read it.
+   `accepted`, not that a member read it. The text is the operator's caption, then lines the backend adds from the
+   verification (`asapify_api/alert_text.py`, since 17 October 2026): the region and province, the coordinates of the
+   hot pixel (else the strongest pixel or the cell centre) with a Google Maps link, the satellite slot in UTC+7 with
+   the region's status, the NASA FIRMS count the verdict rests on, and a link to the region page
+   (`ASAPIFY_PUBLIC_ORIGIN`); the worker ends it with "ALERT is an indication, not a confirmed fire." The region
+   detail returns the same lines as `telegram_details` on each verification, so the operator sees them under the
+   caption before publishing. Alerts saved before that day carry only the caption.
 6. A timeout or a dead process after the claim may mean Telegram already accepted it. The status becomes `unknown`;
    there is no automatic retry. The sweep marks `sending` older than 5 minutes as unknown. This avoids blind
    resends; it is **not an exactly-once guarantee**.

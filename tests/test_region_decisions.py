@@ -9,7 +9,7 @@ from asapify_api.app import app
 from asapify_api.auth import require_operator
 from asapify_api.core import utc_now
 from asapify_api.engine_routes import get_engine_repo
-from asapify_engine.regions import load_regions
+from asapify_engine.regions import PROVINCE_NAMES, load_regions
 from test_engine_ingest import FakeRepo
 from test_notifications import count, fanout_db
 from test_verifier import RECORD, SETTINGS, TOOL, YAML_OK, fake_run
@@ -80,6 +80,41 @@ def test_publish_creates_one_alert_and_fans_out_once(repo, monkeypatch):
     assert c.post(f"/api/v1/operator/regions/{REGION.id}/decision", json=body).json()["error"]["code"] == "ALREADY_DECIDED"
     store.fan_out.assert_called_once_with(alert_id)
     assert repo.audit[0]["operator_uid"] == "op" and repo.audit[0]["verification_id"] == vid
+
+
+def test_the_group_gets_the_caption_with_coordinates_map_link_and_slot(repo, monkeypatch):
+    monkeypatch.setenv("ASAPIFY_PUBLIC_ORIGIN", "https://asapify.example/")
+    c, store, vid, body = published(repo, monkeypatch)
+    preview = c.get(f"/api/v1/operator/regions/{REGION.id}").json()["verifications"][0]["telegram_details"]
+    assert c.post(f"/api/v1/operator/regions/{REGION.id}/decision", json=body).status_code == 201
+    text = repo.alerts[f"A-{REGION.id}-{vid}"]["text"]
+    assert text == f"{body['caption']}\n\n{preview}"   # the operator saw exactly what the group reads
+    assert preview.splitlines() == [
+        f"Region: {REGION.id}, {PROVINCE_NAMES[REGION.province]}",
+        "Coordinates (hot pixel): 2.5100° S, 113.8000° E",
+        "Map: https://www.google.com/maps?q=-2.5100,113.8000",
+        "Satellite slot: 10 Oct 2026 13:00 UTC+7, status Alert",
+        "NASA FIRMS VIIRS: 2 hotspots (1 nominal or high confidence) within ±24 h of the slot",
+        f"Details: https://asapify.example/regions/{REGION.id}",
+    ]
+
+
+def test_a_verification_without_location_takes_the_hot_pixel_of_its_slot(repo, monkeypatch):
+    c, store, vid, body = published(repo, monkeypatch)
+    del repo.verifications[REGION.id][-1]["location"]   # stored before 17 Oct 2026
+    repo.slots[REGION.id] = [{**RECORD, "inputs": {**RECORD["inputs"], "hot_lat": -2.6, "hot_lon": 113.9}}]
+    preview = c.get(f"/api/v1/operator/regions/{REGION.id}").json()["verifications"][0]["telegram_details"]
+    assert "Coordinates (hot pixel): 2.6000° S, 113.9000° E" in preview
+    assert c.post(f"/api/v1/operator/regions/{REGION.id}/decision", json=body).status_code == 201
+    assert "Coordinates (hot pixel): 2.6000° S, 113.9000° E" in repo.alerts[f"A-{REGION.id}-{vid}"]["text"]
+
+
+def test_older_verifications_name_the_region_centre_and_no_origin_means_no_link(monkeypatch):
+    from asapify_api.alert_text import alert_details
+    monkeypatch.delenv("ASAPIFY_PUBLIC_ORIGIN", raising=False)
+    lines = alert_details(REGION, {"observed_at": "2026-10-10T17:10:00Z", "region_status": "WARNING"}).splitlines()
+    assert lines[1].startswith("Coordinates (region centre): ") and lines[-1].endswith("11 Oct 2026 00:10 UTC+7, status Warning")
+    assert not any(line.startswith("Details:") for line in lines)
 
 
 def test_rejected_verification_cannot_be_published(repo, monkeypatch):

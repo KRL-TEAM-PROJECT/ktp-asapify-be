@@ -272,6 +272,15 @@ def test_fanout_queues_one_job_per_group_and_records_the_summary():
     assert job['channel'] == 'telegram_group' and job['text'] == '<b>WARNING</b>' and job['not_before'] == NOW
 
 
+def test_fanout_sends_the_full_text_when_the_alert_has_one():
+    db = fanout_db(1)
+    db.docs['alerts/A-test']['text'] = '<b>WARNING</b>\n\nCoordinates (hot pixel): 2.5100° S, 113.8000° E'
+    NotificationStore(db).fan_out('A-test')
+    job = next(v for k, v in db.docs.items() if k.startswith('notification_jobs/'))
+    assert job['text'].endswith('113.8000° E')
+    assert 'Coordinates (hot pixel)' in send.__globals__['text_message'](job)
+
+
 def test_resumed_fanout_skips_existing_and_never_resets_a_claimed_job():
     db = fanout_db(2)
     store = NotificationStore(db)

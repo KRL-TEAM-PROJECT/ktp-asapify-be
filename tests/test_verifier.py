@@ -80,6 +80,15 @@ def test_confirmed_verdict_backed_by_the_tool_is_kept():
     assert record["tool_calls"][0]["hotspot_count"] == 2 and record["region_status"] == "ALERT"
 
 
+def test_record_names_the_point_it_is_about():
+    assert analyze(fake_run(YAML_OK, [TOOL]))["location"] == {"lat": -2.51, "lon": 113.8, "point": "hot_pixel"}
+    quiet = {**RECORD, "views": {"himawari9": {**VIEW, "n_hot": 0}, "gk2a": None},
+             "inputs": {**RECORD["inputs"], "hot_lat": None, "hot_lon": None}}
+    assert verifier.location(REGION, quiet) == {"lat": -2.5, "lon": 113.75, "point": "region_centre"}
+    warm = {**quiet, "inputs": RECORD["inputs"]}   # a fire-like pixel below the hot threshold
+    assert verifier.location(REGION, warm)["point"] == "strongest_pixel"
+
+
 def test_numbers_no_tool_returned_downgrade_to_manual_review():
     invented = analyze(fake_run(YAML_OK.replace("firms_hotspot_count: 2", "firms_hotspot_count: 9"), [TOOL]))
     assert invented["validation_status"] == "NEEDS_MANUAL_REVIEW" and invented["agent_validation_status"] == "CONFIRMED"

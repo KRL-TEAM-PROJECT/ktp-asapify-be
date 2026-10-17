@@ -89,7 +89,8 @@ class NotificationStore:
         """
         alert_ref = self.db.collection('alerts').document(alert_id)
         alert = alert_ref.get().to_dict()
-        payload = {'id': alert['id'], 'province': str(alert['province']), 'text': alert['caption'],
+        # `text` = the caption plus the coordinates, map link and slot (alert_text.py); alerts older than it: the caption
+        payload = {'id': alert['id'], 'province': str(alert['province']), 'text': alert.get('text') or alert['caption'],
                    'purpose': alert['purpose'], 'expires_at': alert['expires_at']}
         groups = [s.id for s in self.db.collection(GROUPS).stream()]
         self._create_missing([('notification_jobs', group_job(payload, g, alert['published_at'])) for g in groups])
