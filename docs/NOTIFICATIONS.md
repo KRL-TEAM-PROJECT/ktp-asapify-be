@@ -7,13 +7,14 @@ join page (`/join`) and reads it. Nobody subscribes, links a personal chat or ke
 alerts and answers only two things: `/start` in a group (whether the group is now linked) and any private message (a
 pointer to `/join`). It answers no questions.
 
-Status at the freeze (16 October 2026): live in `hack2skill-510921` (bot `@asapify_alert_bot`); published alerts
-reach the linked group. The group's invite link was not saved yet on 16 Oct (`GET /api/v1/telegram/join` returned
-`[]`). Since 18 Oct the backend keeps the team's group link: the join endpoint lists "ASAPify alert group"
+Status at the freeze (18 October 2026): live in `hack2skill-510921` (bot `@asapify_alert_bot`); published alerts
+reach the linked group. The backend keeps the team's group link: the join endpoint lists "ASAPify alert group"
 (https://t.me/+dWeL0KTSkbYxOTE9, `TEAM_GROUP` in `asapify_api/notification_routes.py`) first, and any group whose
 invite link an operator saves (step 5 of "The Telegram group" below) after it. A saved group with the same link takes
 its place under its own title. `TELEGRAM_JOIN_URL` on `asapify-api` replaces the link; an empty value hides it. The
-frontend shows only what the endpoint returns.
+frontend shows only what the endpoint returns. (Until 18 October no link was saved, and the endpoint returned `[]`.)
+
+![From Alert to the Telegram group: the verdict waits for an operator until 12 hours after the slot, a Confirmed nobody decided on in 2 hours is published by the sweep, and every publication is one Firestore transaction followed by one outbox job per linked group through Cloud Tasks to Telegram](diagrams/backend-alerts.png)
 
 ## Flow and guarantees
 

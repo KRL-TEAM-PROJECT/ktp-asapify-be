@@ -5,7 +5,7 @@ The runner handles the API, worker, queue, indexes and the recovery scheduler, a
 `dry_run`. The engine's schedule (`gcp/geo-setup.sh`), the agent (`gcp/agent-setup.sh`) and live Telegram
 (`gcp/telegram-live.sh`) are separate scripts.
 
-## History up to the freeze (16 October 2026)
+## History up to the freeze (18 October 2026)
 
 - 9 Oct: Fitroh ran the `backend` stage and set up Hosting. The API, worker, queue, three indexes and the
   sweep schedule are live. The FE is deployed by GitHub Actions in the FE repo (see `docs/GCP.md` there).
@@ -13,11 +13,17 @@ The runner handles the API, worker, queue, indexes and the recovery scheduler, a
   "Image-only update" below. Mode stayed `dry_run`; Telegram and FCM stayed off.
 - 13 Oct: automatic deployment is active (see "Automatic deployment" below); first run deployed `gh-dfc52e1`.
   Firestore rules released (no direct browser access).
-- 16 Oct, freeze: the engine fills the map every 10 minutes, Telegram is live and published alerts reach the linked
-  group. The GCS data bucket stays empty: no code uses it. Both services run `gh-f40381a` (tag
-  `freeze-2026-10-16`). Artifact Registry keeps the latest 3 images and deletes older ones after 7 days.
-- After the freeze tag (16 Oct): adaptive fuzzy curves, the visual check and a 15-minute cycle. After the deploy
-  that brings them, rerun `gcp/geo-setup.sh` with `APPLY=1` so the geo tick runs every 15 minutes.
+- 16 Oct, submission: the engine fills the map every 10 minutes, Telegram is live and published alerts reach the
+  linked group. The GCS data bucket stays empty: no code uses it. Both services ran `gh-f40381a`. Artifact
+  Registry keeps the latest 3 images and deletes older ones after 7 days.
+- 16 Oct, after the submission tag: adaptive fuzzy curves, the visual check and the 15-minute cycle. The deploy that
+  brings them needs `gcp/geo-setup.sh` rerun with `APPLY=1`, so the geo tick runs every 15 minutes.
+- 17 Oct: the strongest view as a second Fuzzy MAUT attribute, the place, time and map link in every Telegram alert,
+  queued agent runs that survive the daily quota, and cached past days.
+- 18 Oct, final freeze: the team group's invite link kept by the backend, the humidity normal across the new year,
+  ΔT as counted in the day archive, publishing closed 12 hours after the slot and the automatic publication of a
+  confirmed alert nobody decided on within 2 hours. Both services run the image of the final merge (tag
+  `freeze-2026-10-18`).
 
 ## 1. Open Cloud Shell and get the source
 

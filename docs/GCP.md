@@ -3,6 +3,11 @@
 This guide is for a dedicated ASAPify project that is active and linked to billing.
 The `hack2skill-510921` project has been live since 9 October 2026; see [CLOUDSHELL.md](CLOUDSHELL.md) for its status.
 
+![ASAPify on Google Cloud: Firebase Hosting and Authentication in front, the Cloud Run services asapify-api and asapify-notify, Cloud Scheduler and Cloud Tasks, Firestore and Secret Manager, Gemini on Agent Platform, and Workload Identity Federation with Artifact Registry for GitHub Actions](diagrams/gcp-infrastructure.png)
+
+Everything this guide and [NOTIFICATIONS.md](NOTIFICATIONS.md) set up, in one drawing (from
+[diagrams/asapify-diagrams.html](diagrams/asapify-diagrams.html)).
+
 To run every stage at once from the user's Cloud Shell account, see the
 [Cloud Shell runner](CLOUDSHELL.md). The runner provides the plan, backend deploy, Hosting deploy and smoke checks.
 
@@ -135,10 +140,11 @@ The engine writes its own data: Cloud Scheduler calls the worker's geo tick ever
 The old inline Telegram path was replaced by a multi-channel outbox. Follow [NOTIFICATIONS.md](NOTIFICATIONS.md)
 for the worker, Cloud Tasks, the Telegram group, the Firestore index and cloud tests.
 
-## Left undone at the freeze (16 October 2026)
+## Left undone at the freeze (18 October 2026)
 
 1. Scope stays Sumatra + Kalimantan (65 peat regions); ALERT can be reached day or night (ENGINE.md, rules).
-2. Thresholds are calibrated on one VIIRS night slot only; no night streaks or neighbour support.
+2. The thresholds were checked against VIIRS on one night slot only, which is not a calibration; no night streaks
+   or neighbour support.
 3. The agent's visual check uses daytime GIBS imagery only (a night observation is checked against the afternoon
    before it); the GIBS layer names were not tested before deployment.
 4. Alerts cannot be closed early; they expire one hour after publishing. No historical decision snapshots.
