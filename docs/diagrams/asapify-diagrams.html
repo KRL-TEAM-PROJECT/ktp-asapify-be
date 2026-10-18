@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASAPify system diagrams</title>
+<meta name="description" content="How ASAPify turns Himawari-9 and GK2A pixels into peat-fire alerts, and where each part runs on Google Cloud.">
+<!--
+  ASAPify system diagrams: a slide deck made with the visual-explainer deck patterns.
+  Source of the README images in both repositories (docs/diagrams/*.png); export them with ?export=1 at 1600 x 900.
+  Colours and type follow the ASAPify app (src/styles.css): Plus Jakarta Sans and JetBrains Mono, Peat Charcoal,
+  Canopy Emerald, Thermal Amber, and the status colours moss, amber and ember.
+-->
+<script>(function () { var q = location.search, r = document.documentElement, t = q.match(/[?&]theme=(light|dark)/); if (t) r.dataset.theme = t[1]; if (/[?&]export\b/.test(q)) { r.classList.add('export'); if (!t) r.dataset.theme = 'light'; } })();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============ THEME: the ASAPify app's palette ============ */
+  :root {
+    color-scheme: light dark;
+    --font-body: 'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+    --bg: #F8FAFC; --surface: #FFFFFF; --surface2: #F1F5F9; --border: #E2E8F0; --border-bright: #CBD5E1;
+    --text: #1E293B; --text-dim: #475569;
+    --accent: #1B4D3E; --accent-dim: rgba(27, 77, 62, 0.07);
+    --thermal: #EA580C; --thermal-dim: rgba(234, 88, 12, 0.09);
+    --moss: #15803D; --amber: #CA8A04; --ember: #DC2626; --slate: #64748B;
+    --who-rule: #15803D; --who-ai: #64748B; --who-human: #1E293B; --who-auto: #CA8A04;
+    --hex: #3B78E7; --zone-line: #3F5F8F; --z-people: #D7E4F8; --z-git: #E7EAEE; --z-cloud: #E4EEFA;
+    --z-data: #DDEFD9; --z-tg: #DAE9F6; --grp-line: #FFFFFF; --grp-fill: rgba(255, 255, 255, 0.42);
+    --wire: #111827; --wire-dash: #64748B; --pill: #FFFFFF; --dev-ink: #2E4A7A; --ext-ink: #1E293B;
+    --code-bg: #1E293B; --code-text: #E2E8F0;
+    --px3: #FCD9A8; --px4: #F59E0B;
+    --brand-ink: #1E293B; --brand-leaf: #1B4D3E; --brand-flame-hi: #D97706; --brand-flame-lo: #EA580C; --brand-dot: #EA580C;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F172A; --surface: #1E293B; --surface2: #26334A; --border: #334155; --border-bright: #475569;
+      --text: #F8FAFC; --text-dim: #A5B4C8; --accent: #4ADE80; --accent-dim: rgba(74, 222, 128, 0.08);
+      --thermal: #FB923C; --thermal-dim: rgba(251, 146, 60, 0.12);
+      --moss: #4ADE80; --amber: #FACC15; --ember: #F87171; --slate: #94A3B8;
+      --who-rule: #4ADE80; --who-ai: #94A3B8; --who-human: #F8FAFC; --who-auto: #FACC15;
+      --zone-line: #7FA3D9; --z-people: #1B2A44; --z-git: #232B37; --z-cloud: #16243B; --z-data: #1A3024; --z-tg: #172B3D;
+      --grp-line: #64748B; --grp-fill: rgba(255, 255, 255, 0.03); --wire: #E2E8F0; --wire-dash: #94A3B8;
+      --pill: #0F172A; --dev-ink: #A9C4F0; --ext-ink: #E2E8F0; --code-bg: #0B1220;
+      --px3: #5C3A12; --px4: #B45309;
+      --brand-ink: #F8FAFC; --brand-leaf: #F8FAFC; --brand-flame-hi: #F8FAFC; --brand-flame-lo: #F8FAFC; --brand-dot: #F8FAFC;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F172A; --surface: #1E293B; --surface2: #26334A; --border: #334155; --border-bright: #475569;
+    --text: #F8FAFC; --text-dim: #A5B4C8; --accent: #4ADE80; --accent-dim: rgba(74, 222, 128, 0.08);
+    --thermal: #FB923C; --thermal-dim: rgba(251, 146, 60, 0.12);
+    --moss: #4ADE80; --amber: #FACC15; --ember: #F87171; --slate: #94A3B8;
+    --who-rule: #4ADE80; --who-ai: #94A3B8; --who-human: #F8FAFC; --who-auto: #FACC15;
+    --zone-line: #7FA3D9; --z-people: #1B2A44; --z-git: #232B37; --z-cloud: #16243B; --z-data: #1A3024; --z-tg: #172B3D;
+    --grp-line: #64748B; --grp-fill: rgba(255, 255, 255, 0.03); --wire: #E2E8F0; --wire-dash: #94A3B8;
+    --pill: #0F172A; --dev-ink: #A9C4F0; --ext-ink: #E2E8F0; --code-bg: #0B1220;
+    --px3: #5C3A12; --px4: #B45309;
+    --brand-ink: #F8FAFC; --brand-leaf: #F8FAFC; --brand-flame-hi: #F8FAFC; --brand-flame-lo: #F8FAFC; --brand-dot: #F8FAFC;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: var(--bg); }
+  body { font-family: var(--font-body); color: var(--text); overflow: hidden; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration: underline; text-decoration-color: var(--border-bright); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--text); }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+  code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+
+  /* ============ DECK ENGINE ============ */
+  .deck { height: 100dvh; overflow-y: auto; scroll-snap-type: y mandatory; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
+  .slide {
+    height: 100dvh; scroll-snap-align: start; overflow: hidden; position: relative; isolation: isolate;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: clamp(28px, 5vh, 64px) clamp(24px, 6vw, 96px);
+    opacity: 0; transform: translateY(32px) scale(0.985);
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .slide.visible { opacity: 1; transform: none; }
+  .slide .reveal { opacity: 0; transform: translateY(16px); transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+  .slide.visible .reveal { opacity: 1; transform: none; }
+  .slide.visible .reveal:nth-child(2) { transition-delay: 0.08s; }
+  .slide.visible .reveal:nth-child(3) { transition-delay: 0.16s; }
+  .slide.visible .reveal:nth-child(4) { transition-delay: 0.24s; }
+  .slide.visible .reveal:nth-child(5) { transition-delay: 0.32s; }
+  .slide.visible .reveal:nth-child(6) { transition-delay: 0.4s; }
+  @media (prefers-reduced-motion: reduce) {
+    .slide, .slide .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+    .deck { scroll-behavior: auto; }
+  }
+
+  /* ============ NAV CHROME ============ */
+  .deck-progress { position: fixed; top: 0; left: 0; height: 3px; background: var(--thermal); z-index: 100; transition: width 0.3s ease; pointer-events: none; }
+  .deck-dots {
+    position: fixed; right: clamp(8px, 1.4vw, 20px); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column;
+    gap: 7px; z-index: 100; padding: 8px 6px; border-radius: 20px;
+    background: color-mix(in srgb, var(--bg) 70%, transparent 30%); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  }
+  .deck-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); opacity: 0.3; border: none; padding: 0; cursor: pointer; transition: opacity 0.2s ease, transform 0.2s ease; }
+  .deck-dot:hover { opacity: 0.6; }
+  .deck-dot.active { opacity: 1; transform: scale(1.45); background: var(--thermal); }
+  .deck-counter { position: fixed; bottom: clamp(10px, 2vh, 22px); right: clamp(12px, 2vw, 24px); font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); z-index: 100; font-variant-numeric: tabular-nums; }
+  .deck-nav { position: fixed; bottom: clamp(8px, 1.6vh, 18px); right: clamp(64px, 5.5vw, 86px); display: flex; gap: 6px; z-index: 100; }
+  .deck-nav button {
+    min-width: 40px; min-height: 40px; border-radius: 6px; border: 1px solid var(--border-bright); cursor: pointer;
+    background: color-mix(in srgb, var(--surface) 85%, transparent 15%); color: var(--text); font: 600 16px var(--font-body);
+  }
+  .deck-nav button:disabled { opacity: 0.35; cursor: default; }
+  .deck-hints { position: fixed; bottom: clamp(16px, 2.4vh, 26px); left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--text-dim); opacity: 0.75; z-index: 100; transition: opacity 0.5s ease; white-space: nowrap; }
+  .deck-hints.faded { opacity: 0; pointer-events: none; }
+
+  /* export mode (?export=1): no chrome, no motion, light theme; used for the README images */
+  html.export .deck-progress, html.export .deck-dots, html.export .deck-counter, html.export .deck-nav,
+  html.export .deck-hints, html.export .zoom-controls, html.export .diagram-shell__hint { display: none !important; }
+  html.export .slide, html.export .slide .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+  html.export .deck { scroll-behavior: auto; scroll-snap-type: none; }
+
+  /* ============ TYPE ============ */
+  .slide__display { font-size: clamp(40px, 6.4vw, 92px); font-weight: 800; letter-spacing: -0.035em; line-height: 0.98; text-wrap: balance; }
+  .slide__heading { font-size: clamp(26px, 3.4vw, 46px); font-weight: 800; letter-spacing: -0.025em; line-height: 1.08; text-wrap: balance; }
+  .slide__lede { font-size: clamp(17px, 1.7vw, 24px); line-height: 1.5; color: var(--text-dim); max-width: 46ch; text-wrap: pretty; }
+  .slide__body { font-size: clamp(15px, 1.35vw, 19px); line-height: 1.55; color: var(--text-dim); text-wrap: pretty; }
+  .slide__sub { font-size: clamp(14px, 1.25vw, 18px); color: var(--text-dim); margin-top: 8px; max-width: 80ch; text-wrap: pretty; }
+  .slide__head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: clamp(12px, 2.4vh, 28px); }
+  .slide__head > div { min-width: 0; }
+  .who-key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; color: var(--text-dim); flex: none; }
+  .who-key span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .who-key i { width: 18px; height: 4px; border-radius: 2px; display: inline-block; }
+
+  /* ============ TITLE ============ */
+  .slide--title { background-image: radial-gradient(ellipse at 82% 40%, var(--thermal-dim) 0%, transparent 46%); }
+  .title-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(24px, 4vw, 72px); align-items: center; }
+  .lockup { display: flex; align-items: center; gap: 14px; margin-bottom: clamp(18px, 3.4vh, 40px); }
+  .lockup svg { height: clamp(40px, 6vh, 64px); width: auto; }
+  .lockup .word { height: clamp(22px, 3.2vh, 34px); }
+  .title-copy .slide__lede { margin-top: clamp(16px, 2.6vh, 28px); }
+  .title-meta { margin-top: clamp(18px, 3vh, 34px); font-size: clamp(13px, 1.1vw, 16px); color: var(--text-dim); }
+  .pixels { width: 100%; height: auto; display: block; }
+  .pixels .t0 { fill: var(--surface2); } .pixels .t1 { fill: var(--border); } .pixels .t2 { fill: var(--border-bright); }
+  .pixels .t3 { fill: var(--px3); } .pixels .t4 { fill: var(--px4); } .pixels .t5 { fill: var(--thermal); }
+  .pixels .cl { fill: var(--surface); stroke: var(--border-bright); stroke-width: 1; }
+  .pixels .peat { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 7 5; stroke-linejoin: round; }
+  .pixels .ring { fill: none; stroke: var(--text); stroke-width: 2.5; }
+  .pixel-cap { margin-top: 10px; font-size: 13px; color: var(--text-dim); text-align: right; }
+
+  /* ============ DIVIDER ============ */
+  .slide--divider { justify-content: center; }
+  .slide--divider .slide__number {
+    font-size: clamp(110px, 22vw, 300px); font-weight: 200; line-height: 0.85; opacity: 0.07; position: absolute;
+    right: 6vw; top: 50%; transform: translateY(-52%); pointer-events: none; font-variant-numeric: tabular-nums; color: var(--thermal);
+  }
+  .slide--divider .slide__heading { font-size: clamp(36px, 5.2vw, 72px); }
+  .slide--divider .slide__lede { margin-top: 14px; }
+
+  /* ============ DASHBOARD ============ */
+  .kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: clamp(10px, 1.4vw, 20px); }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: clamp(14px, 2.4vh, 28px) clamp(14px, 1.4vw, 22px); min-width: 0; }
+  .kpi__val { font-size: clamp(34px, 4.4vw, 64px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .kpi__label { font-size: clamp(14px, 1.15vw, 17px); color: var(--text-dim); margin-top: 8px; line-height: 1.4; }
+  .status-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(8px, 1vw, 14px); margin-top: clamp(16px, 3vh, 30px); }
+  .st { border-top: 4px solid; padding-top: 10px; min-width: 0; }
+  .st b { font-size: clamp(16px, 1.4vw, 20px); display: block; }
+  .st span { font-size: clamp(13px, 1.05vw, 16px); color: var(--text-dim); line-height: 1.45; display: block; margin-top: 4px; }
+  .st--safe { border-color: var(--moss); } .st--warn { border-color: var(--amber); } .st--alert { border-color: var(--ember); }
+  .st--nobs { border-image: repeating-linear-gradient(90deg, var(--slate) 0 6px, transparent 6px 10px) 4; border-top-style: solid; }
+
+  /* ============ PIPELINE (how it works, deploy) ============ */
+  .pipeline { display: flex; align-items: stretch; min-height: 0; list-style: none; }
+  .pipeline__step {
+    flex: 1; background: var(--surface); border: 1px solid var(--border); border-top: 4px solid var(--who-rule); border-radius: 8px;
+    padding: clamp(12px, 2.2vh, 24px) clamp(12px, 1.2vw, 20px); display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow-wrap: break-word;
+  }
+  .pipeline__step.by-ai { border-top-color: var(--who-ai); }
+  .pipeline__step.by-human { border-top-color: var(--who-human); }
+  .pipeline__top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .pipeline__num { font-size: clamp(22px, 2.2vw, 32px); font-weight: 800; color: var(--text-dim); font-variant-numeric: tabular-nums; line-height: 1; }
+  .who { font-size: 13px; font-weight: 700; padding: 3px 9px; border-radius: 999px; border: 1.5px solid var(--who-rule); color: var(--text); white-space: nowrap; }
+  .by-ai .who { border-color: var(--who-ai); }
+  .by-human .who { border-color: var(--who-human); }
+  .pipeline__name { font-size: clamp(17px, 1.55vw, 23px); font-weight: 800; line-height: 1.2; letter-spacing: -0.01em; }
+  .pipeline__desc { font-size: clamp(13.5px, 1.12vw, 16.5px); color: var(--text-dim); line-height: 1.5; flex: 1; }
+  .pipeline__src { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { font-size: 12.5px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: var(--surface2); color: var(--text); white-space: nowrap; }
+  .pipeline__arrow { display: flex; align-items: center; padding: 0 clamp(2px, 0.4vw, 6px); color: var(--text-dim); flex: none; }
+  .pipeline__arrow svg { width: 22px; height: 22px; }
+  .outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(10px, 1.4vw, 20px); margin-top: clamp(12px, 2.4vh, 26px); }
+  .outcome { display: flex; gap: 14px; align-items: center; background: var(--accent-dim); border-radius: 8px; padding: 14px 18px; min-width: 0; }
+  .outcome svg { width: 34px; height: 34px; flex: none; color: var(--accent); fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .outcome b { display: block; font-size: clamp(15px, 1.3vw, 19px); }
+  .outcome span { font-size: clamp(13px, 1.05vw, 16px); color: var(--text-dim); }
+
+  /* ============ TIMELINE (who decides, and when) ============ */
+  .tl { list-style: none; position: relative; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(8px, 1vw, 16px); padding-top: 34px; }
+  .tl::before { content: ''; position: absolute; left: 0; right: 0; top: 13px; height: 3px; background: linear-gradient(90deg, var(--border-bright), var(--text-dim)); border-radius: 2px; }
+  .tl__ev { position: relative; min-width: 0; }
+  .tl__ev::before { content: ''; position: absolute; top: -28px; left: 0; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); border: 3px solid var(--who-rule); }
+  .tl__ev.by-ai::before { border-color: var(--who-ai); }
+  .tl__ev.by-human::before { border-color: var(--who-human); }
+  .tl__ev.by-auto::before { border-color: var(--who-auto); background: var(--who-auto); }
+  .tl__ev.is-end::before { border-radius: 2px; border-color: var(--ember); }
+  .tl__when { font-size: clamp(15px, 1.35vw, 20px); font-weight: 800; font-variant-numeric: tabular-nums; }
+  .tl__what { font-size: clamp(13.5px, 1.12vw, 16.5px); color: var(--text-dim); line-height: 1.5; margin-top: 6px; }
+  .tl__what b { color: var(--text); font-weight: 700; }
+  .rules3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 1.4vw, 20px); margin-top: clamp(22px, 5vh, 56px); }
+  .rule3 { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; font-size: clamp(14px, 1.2vw, 18px); line-height: 1.5; min-width: 0; }
+  .rule3 b { display: block; }
+  .rule3 span { color: var(--text-dim); }
+
+  /* ============ GCP DRAWING ============ */
+  .slide--gcp { padding-top: clamp(18px, 3vh, 36px); padding-bottom: clamp(14px, 2.4vh, 30px); }
+  .slide--gcp .slide__head { margin-bottom: clamp(6px, 1.2vh, 14px); }
+  .gcp-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  svg.gcp { width: 100%; height: 100%; max-height: 100%; display: block; font-family: var(--font-body); }
+  .gcp .zone { stroke: var(--zone-line); stroke-width: 2; stroke-dasharray: 2 4; }
+  .gcp .z-people { fill: var(--z-people); } .gcp .z-git { fill: var(--z-git); } .gcp .z-cloud { fill: var(--z-cloud); }
+  .gcp .z-data { fill: var(--z-data); } .gcp .z-tg { fill: var(--z-tg); }
+  .gcp .zone-title { font-size: 19px; font-weight: 700; fill: var(--text); }
+  .gcp .grp { fill: var(--grp-fill); stroke: var(--grp-line); stroke-width: 3; }
+  .gcp .grp-cap { font-size: 14px; font-weight: 700; fill: var(--text-dim); }
+  .gcp .hex { fill: var(--hex); }
+  .gcp .hex-dash { fill: var(--surface); stroke: var(--hex); stroke-width: 2.4; stroke-dasharray: 6 4; }
+  .gcp .glyph { color: #FFFFFF; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .gcp .glyph-dash { color: var(--hex); }
+  .gcp .dev-bg { fill: var(--surface); stroke: var(--zone-line); stroke-width: 1.2; }
+  .gcp .dev { color: var(--dev-ink); fill: none; stroke: currentColor; stroke-width: 1.05; stroke-linecap: round; stroke-linejoin: round; }
+  .gcp .ext { fill: var(--surface); stroke: var(--zone-line); stroke-width: 1.4; }
+  .gcp .ext-glyph { color: var(--ext-ink); fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .gcp .n-name { font-size: 15.5px; font-weight: 700; fill: var(--text); }
+  .gcp .n-sub { font-size: 13.5px; fill: var(--text-dim); }
+  .wire { fill: none; stroke: var(--wire); stroke-width: 2; }
+  .wire-dash { stroke: var(--wire-dash); stroke-dasharray: 6 5; }
+  .arrhead { fill: var(--wire); } .arrhead-dash { fill: var(--wire-dash); }
+  .gcp .pill { fill: var(--pill); }
+  .gcp .w-label { font-size: 13.5px; font-weight: 600; fill: var(--text); }
+  .gcp .legend { font-size: 14px; fill: var(--text-dim); }
+
+  /* ============ TABLES ============ */
+  .slide--table { justify-content: center; }
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; min-height: 0; }
+  .table-scroll { overflow: auto; max-height: 100%; }
+  .data-table { width: 100%; border-collapse: collapse; }
+  .data-table th {
+    background: var(--surface2); font-size: clamp(13px, 1.05vw, 15px); font-weight: 700; color: var(--text-dim); text-align: left;
+    padding: clamp(8px, 1.3vh, 13px) clamp(12px, 1.2vw, 18px); border-bottom: 2px solid var(--border-bright); white-space: nowrap;
+  }
+  .data-table td { padding: clamp(8px, 1.35vh, 14px) clamp(12px, 1.2vw, 18px); border-bottom: 1px solid var(--border); font-size: clamp(13.5px, 1.13vw, 17px); line-height: 1.45; vertical-align: top; }
+  .data-table td:first-child { font-weight: 700; white-space: nowrap; }
+  .data-table td.wrap { white-space: normal; }
+  .data-table td.nw, .data-table td.nw code { white-space: nowrap; overflow-wrap: normal; }
+  .data-table tbody tr:last-child td { border-bottom: none; }
+  .data-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface2) 55%, transparent); }
+  .data-table td .dim { color: var(--text-dim); display: block; font-size: 0.9em; margin-top: 2px; }
+  .data-table a { white-space: nowrap; }
+  .tables-2 { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: clamp(12px, 1.6vw, 24px); min-height: 0; }
+  .tables-2 h3 { font-size: clamp(16px, 1.4vw, 20px); margin-bottom: 10px; }
+
+  /* ============ THREE PATHS ============ */
+  .paths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(12px, 1.6vw, 26px); min-height: 0; }
+  .path { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: clamp(14px, 2.2vh, 24px) clamp(14px, 1.3vw, 22px); min-width: 0; display: flex; flex-direction: column; }
+  .path h3 { font-size: clamp(18px, 1.6vw, 24px); font-weight: 800; letter-spacing: -0.01em; }
+  .path > p { font-size: clamp(13px, 1.05vw, 15.5px); color: var(--text-dim); margin-top: 4px; }
+  .path ol { list-style: none; margin-top: clamp(10px, 1.8vh, 18px); display: flex; flex-direction: column; flex: 1; }
+  .path li { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 12px; align-items: start; position: relative; padding-bottom: clamp(10px, 1.9vh, 20px); }
+  .path li:not(:last-child)::after { content: ''; position: absolute; left: 18px; top: 40px; bottom: 4px; width: 2px; background: var(--border-bright); }
+  .path li svg { width: 38px; height: 38px; padding: 7px; border-radius: 8px; background: var(--surface2); color: var(--text); fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .path li.gcp-step svg { background: var(--hex); color: #FFFFFF; }
+  .path li b { display: block; font-size: clamp(14.5px, 1.2vw, 17.5px); line-height: 1.3; }
+  .path li span { display: block; font-size: clamp(13px, 1.02vw, 15px); color: var(--text-dim); line-height: 1.45; margin-top: 2px; }
+
+  /* ============ SNAKE PIPELINE (rating one slot) ============ */
+  .snake { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); column-gap: clamp(22px, 2.4vw, 40px); row-gap: clamp(26px, 5vh, 54px); position: relative; }
+  .snake .card { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: clamp(10px, 1.8vh, 18px) clamp(12px, 1.1vw, 18px); min-width: 0; }
+  .snake .card.hot { border-color: color-mix(in srgb, var(--thermal) 55%, var(--border)); background: color-mix(in srgb, var(--thermal-dim) 60%, var(--surface)); }
+  .snake .card .n { font-size: 15px; font-weight: 800; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .snake .card b { display: block; font-size: clamp(15px, 1.32vw, 19.5px); line-height: 1.25; margin-top: 2px; }
+  .snake .card p { font-size: clamp(12.5px, 1.02vw, 15px); color: var(--text-dim); line-height: 1.45; margin-top: 6px; }
+  .snake .card p code { font-size: 0.92em; }
+  .snake .card .branch { margin-top: 8px; font-size: clamp(12px, 0.98vw, 14.5px); border-left: 3px solid var(--slate); padding-left: 8px; color: var(--text); }
+  .snake .card .branch.alert { border-left-color: var(--ember); }
+  /* reading order snakes: 1-5 left to right, down, 6-10 right to left */
+  .snake { --gx: clamp(22px, 2.4vw, 40px); --gy: clamp(26px, 5vh, 54px); }
+  .snake .card:nth-child(6) { grid-column: 5; grid-row: 2; } .snake .card:nth-child(7) { grid-column: 4; grid-row: 2; }
+  .snake .card:nth-child(8) { grid-column: 3; grid-row: 2; } .snake .card:nth-child(9) { grid-column: 2; grid-row: 2; }
+  .snake .card:nth-child(10) { grid-column: 1; grid-row: 2; }
+  .snake .card:nth-child(-n+4)::after { content: ''; position: absolute; top: 50%; left: 100%; width: var(--gx); height: 2px; background: var(--text-dim); }
+  .snake .card:nth-child(-n+4)::before { content: ''; position: absolute; top: calc(50% - 5px); left: calc(100% + var(--gx) - 8px); border-style: solid; border-width: 6px 0 6px 8px; border-color: transparent transparent transparent var(--text-dim); }
+  .snake .card:nth-child(5)::after { content: ''; position: absolute; left: 50%; top: 100%; width: 2px; height: var(--gy); background: var(--text-dim); }
+  .snake .card:nth-child(5)::before { content: ''; position: absolute; left: calc(50% - 5px); top: calc(100% + var(--gy) - 8px); border-style: solid; border-width: 8px 6px 0 6px; border-color: var(--text-dim) transparent transparent transparent; }
+  .snake .card:nth-child(n+6):nth-child(-n+9)::after { content: ''; position: absolute; top: 50%; right: 100%; width: var(--gx); height: 2px; background: var(--text-dim); }
+  .snake .card:nth-child(n+6):nth-child(-n+9)::before { content: ''; position: absolute; top: calc(50% - 5px); right: calc(100% + var(--gx) - 8px); border-style: solid; border-width: 6px 8px 6px 0; border-color: transparent var(--text-dim) transparent transparent; }
+  .snake-foot { display: flex; gap: clamp(12px, 2vw, 32px); flex-wrap: wrap; margin-top: clamp(14px, 2.6vh, 28px); font-size: clamp(13px, 1.05vw, 16px); color: var(--text-dim); }
+  .snake-foot b { color: var(--text); }
+
+  /* ============ CARDS ============ */
+  .cards { display: grid; gap: clamp(10px, 1.3vw, 20px); min-height: 0; }
+  .cards--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .cards--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .card2 { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: clamp(12px, 2vh, 22px) clamp(12px, 1.2vw, 20px); min-width: 0; }
+  .card2 h3 { font-size: clamp(16px, 1.4vw, 21px); font-weight: 800; }
+  .card2 .how { font-size: clamp(12.5px, 1vw, 15px); color: var(--text-dim); margin-top: 3px; line-height: 1.45; }
+  .card2 ul { list-style: none; margin-top: 10px; display: grid; gap: 6px; }
+  .card2 li { font-size: clamp(12.5px, 1vw, 15px); line-height: 1.4; min-width: 0; }
+  .card2 li code { font-size: 0.92em; background: none; padding: 0; color: var(--text); }
+  .card2 li span { color: var(--text-dim); }
+  .card2.top-public { border-top: 4px solid var(--moss); }
+  .card2.top-operator { border-top: 4px solid var(--text); }
+  .card2.top-webhook { border-top: 4px solid var(--hex); }
+  .card2.top-internal { border-top: 4px solid var(--slate); }
+
+  /* ============ CONTENT ============ */
+  .content-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: clamp(24px, 4vw, 64px); align-items: center; }
+  .bullets { list-style: none; display: grid; gap: clamp(8px, 1.6vh, 16px); margin-top: clamp(14px, 2.6vh, 28px); }
+  .bullets li { position: relative; padding-left: 22px; font-size: clamp(15px, 1.35vw, 20px); line-height: 1.5; color: var(--text-dim); }
+  .bullets li::before { content: ''; position: absolute; left: 0; top: 0.62em; width: 8px; height: 8px; border-radius: 2px; background: var(--thermal); }
+  .bullets li b { color: var(--text); }
+  .aside-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: clamp(16px, 2.6vh, 28px); }
+  .aside-box h3 { font-size: clamp(16px, 1.4vw, 20px); }
+  .aside-box p { font-size: clamp(13.5px, 1.1vw, 16px); color: var(--text-dim); margin-top: 8px; line-height: 1.5; }
+  .bar { display: grid; grid-template-columns: 100px minmax(0, 1fr) 70px; gap: 10px; align-items: center; margin-top: 12px; font-size: 14px; }
+  .bar i { height: 12px; border-radius: 3px; background: var(--accent); display: block; }
+  .bar .v { font-family: var(--font-mono); font-size: 13px; color: var(--text-dim); text-align: right; }
+
+  /* ============ DEPLOY LANES ============ */
+  .lanes { display: grid; gap: clamp(14px, 2.6vh, 28px); }
+  .lane { display: grid; grid-template-columns: clamp(120px, 12vw, 190px) minmax(0, 1fr); gap: clamp(10px, 1.4vw, 22px); align-items: stretch; }
+  .lane__name { display: flex; flex-direction: column; justify-content: center; }
+  .lane__name b { font-size: clamp(17px, 1.6vw, 24px); }
+  .lane__name span { font-size: clamp(12.5px, 1vw, 15px); color: var(--text-dim); }
+  .lane .pipeline__step { border-top-color: var(--hex); padding: clamp(10px, 1.6vh, 16px) clamp(10px, 1vw, 16px); }
+  .lane .pipeline__step.gh { border-top-color: var(--text-dim); }
+  .lane .pipeline__step.ok { border-top-color: var(--moss); }
+  .lane .pipeline__name { font-size: clamp(14.5px, 1.25vw, 18px); }
+  .lane .pipeline__desc { font-size: clamp(12.5px, 1vw, 15px); }
+  .deploy-note { margin-top: clamp(14px, 2.6vh, 28px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 1.4vw, 20px); }
+
+  /* ============ MERMAID SHELL ============ */
+  .slide--diagram { justify-content: flex-start; padding-top: clamp(20px, 3.4vh, 40px); padding-bottom: clamp(16px, 2.6vh, 32px); }
+  .diagram-row { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) clamp(220px, 23vw, 360px); gap: clamp(14px, 1.6vw, 26px); }
+  .diagram-shell { position: relative; min-height: 0; display: flex; flex-direction: column; }
+  .diagram-shell__hint { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; opacity: 0.8; }
+  .mermaid-wrap { position: relative; flex: 1; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; cursor: grab; }
+  .mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+  .mermaid-viewport { position: absolute; inset: 0; overflow: hidden; }
+  .mermaid-canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  .zoom-controls {
+    position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 2px; z-index: 10;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px;
+  }
+  .zoom-controls button {
+    width: 30px; height: 30px; border: none; background: transparent; color: var(--text-dim); font: 600 14px var(--font-body);
+    cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+  }
+  .zoom-controls button:hover { background: var(--surface2); color: var(--text); }
+  .zoom-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); padding: 0 6px; white-space: nowrap; }
+  .mermaid .nodeLabel { color: var(--text) !important; font-family: var(--font-body) !important; }
+  .mermaid .edgeLabel { color: var(--text) !important; background-color: var(--surface) !important; }
+  .mermaid .edgeLabel rect, .mermaid .labelBkg { fill: var(--surface) !important; background-color: var(--surface) !important; }
+  .mermaid .edge-pattern-solid { stroke-width: 2px !important; }
+  .mermaid .node rect, .mermaid .node polygon, .mermaid .node circle { stroke-width: 2px !important; }
+  .notes { display: flex; flex-direction: column; gap: clamp(8px, 1.6vh, 14px); min-width: 0; overflow: auto; }
+  .note { border-left: 3px solid var(--border-bright); padding: 2px 0 2px 12px; font-size: clamp(13px, 1.02vw, 15.5px); line-height: 1.5; color: var(--text-dim); }
+  .note b { color: var(--text); display: block; font-size: 1.04em; }
+  .note.k-rule { border-left-color: var(--who-rule); } .note.k-ai { border-left-color: var(--who-ai); }
+  .note.k-human { border-left-color: var(--who-human); } .note.k-auto { border-left-color: var(--who-auto); }
+  .note.k-gcp { border-left-color: var(--hex); }
+
+  /* ============ CLOSING ============ */
+  .slide--close { background-image: radial-gradient(ellipse at 18% 78%, var(--accent-dim) 0%, transparent 50%); }
+  .close-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 1.4vw, 20px); margin-top: clamp(20px, 4vh, 44px); }
+  .close-links div { border-top: 3px solid var(--text); padding-top: 10px; min-width: 0; }
+  .close-links b { display: block; font-size: clamp(15px, 1.3vw, 19px); }
+  .close-links span, .close-links a { font-size: clamp(13.5px, 1.1vw, 16.5px); color: var(--text-dim); overflow-wrap: anywhere; }
+
+  /* ============ RESPONSIVE ============ */
+  @media (max-height: 700px) {
+    .slide { padding-top: 22px; padding-bottom: 22px; }
+    .slide__display { font-size: clamp(34px, 5.4vw, 64px); }
+  }
+  @media (max-width: 1100px) {
+    .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cards--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tl { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 40px; }
+    .diagram-row { grid-template-columns: minmax(0, 1fr); }
+    .notes { display: none; }
+  }
+  @media (max-width: 860px) {
+    body { overflow: auto; }
+    .deck { height: auto; overflow: visible; scroll-snap-type: none; }
+    .slide { height: auto; min-height: 100dvh; overflow: visible; padding: 56px 16px 72px; justify-content: flex-start; }
+    .title-grid, .content-grid, .tables-2 { grid-template-columns: minmax(0, 1fr); }
+    .kpis, .status-strip, .outcomes, .rules3, .paths, .cards--3, .cards--4, .close-links, .deploy-note { grid-template-columns: minmax(0, 1fr); }
+    .pipeline { flex-direction: column; }
+    .pipeline__arrow { justify-content: center; padding: 4px 0; transform: rotate(90deg); }
+    .snake { grid-template-columns: minmax(0, 1fr); }
+    .snake .card::after, .snake .card::before { display: none !important; }
+    .snake .card { grid-column: auto !important; grid-row: auto !important; }
+    .tl { grid-template-columns: minmax(0, 1fr); padding-top: 0; padding-left: 30px; }
+    .tl::before { left: 6px; right: auto; top: 0; bottom: 0; width: 3px; height: auto; }
+    .tl__ev::before { top: 3px; left: -30px; }
+    .lane { grid-template-columns: minmax(0, 1fr); }
+    .gcp-wrap { overflow-x: auto; justify-content: flex-start; }
+    svg.gcp { min-width: 820px; height: auto; }
+    .mermaid-wrap { min-height: 70vh; }
+    .data-table td:first-child { white-space: normal; }
+    .deck-dots, .deck-nav, .deck-hints, .deck-counter { display: none; }
+    .slide__head { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><marker id="arr" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="arrhead"/></marker><marker id="arr-dash" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="arrhead-dash"/></marker></defs><symbol id="g-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M4.6 7.5h14.8M4.6 16.5h14.8"/></symbol><symbol id="g-userkey" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c0-3.3 2.6-5.7 6-5.7 1.4 0 2.6.4 3.6 1"/><circle cx="17" cy="13" r="2.4"/><path d="M18.7 14.7l3 3M20.5 16.5l-1.4 1.4"/></symbol><symbol id="g-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5.2c0 4.5-3 8.2-7 9.8-4-1.6-7-5.3-7-9.8V6z"/><path d="M8.6 12.2l2.4 2.4 4.4-4.8"/></symbol><symbol id="g-api" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9.5 9.5L7 12l2.5 2.5M14.5 9.5L17 12l-2.5 2.5M12.9 8.6l-1.8 6.8"/></symbol><symbol id="g-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="6.2"/><path d="M18.20 12.00L21.00 12.00"/><path d="M16.38 16.38L18.36 18.36"/><path d="M12.00 18.20L12.00 21.00"/><path d="M7.62 16.38L5.64 18.36"/><path d="M5.80 12.00L3.00 12.00"/><path d="M7.62 7.62L5.64 5.64"/><path d="M12.00 5.80L12.00 3.00"/><path d="M16.38 7.62L18.36 5.64"/></symbol><symbol id="g-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.6 2.2"/></symbol><symbol id="g-queue" viewBox="0 0 24 24"><path d="M3.5 7h10M3.5 12h10M3.5 17h10"/><path d="M16.5 8.5L20 12l-3.5 3.5"/></symbol><symbol id="g-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"/><path d="M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6"/></symbol><symbol id="g-key" viewBox="0 0 24 24"><circle cx="7.5" cy="12" r="3.6"/><path d="M11.1 12H21M18 12v3.2M15 12v2.2"/></symbol><symbol id="g-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/><path d="M12 9l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></symbol><symbol id="g-agent" viewBox="0 0 24 24"><rect x="4.5" y="7" width="15" height="11" rx="3"/><path d="M12 4v3M9 12h.01M15 12h.01M9.5 15h5"/></symbol><symbol id="g-box" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></symbol><symbol id="g-logs" viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M9 10h6M9 13.5h6M9 17h4"/></symbol><symbol id="g-badge" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="8.5" cy="11" r="1.9"/><path d="M5.8 15.6c.6-1.3 1.6-2 2.7-2s2.1.7 2.7 2M14 10h4M14 13.5h3"/></symbol><symbol id="g-sat" viewBox="0 0 24 24"><path d="M12 8.6l3.4 3.4-3.4 3.4-3.4-3.4z"/><path d="M7.4 3.6l3 3-2 2-3-3zM16.6 20.4l-3-3 2-2 3 3z"/><path d="M15.5 4.5a4 4 0 0 1 4 4M15.5 1.8a6.7 6.7 0 0 1 6.7 6.7"/></symbol><symbol id="g-flame" viewBox="0 0 24 24"><path d="M12 3c.8 3 4.5 4.6 4.5 9a4.5 4.5 0 0 1-9 0c0-2.3 1.1-3.6 2.2-4.6 0 1.7.9 2.8 2.1 2.8 0-2.8-1.2-4.6.2-7.2z"/></symbol><symbol id="g-drop" viewBox="0 0 24 24"><path d="M12 3.5c3 4 6 7 6 10.5a6 6 0 0 1-12 0c0-3.5 3-6.5 6-10.5z"/><path d="M9.3 14.5a2.8 2.8 0 0 0 2.7 2.6"/></symbol><symbol id="g-cloud" viewBox="0 0 24 24"><path d="M7.2 16.5h9.6a3.9 3.9 0 0 0 .4-7.8 5.4 5.4 0 0 0-10.4 1.4 3.2 3.2 0 0 0 .4 6.4z"/><path d="M9 19.2l-.8 1.6M12.5 19.2l-.8 1.6M16 19.2l-.8 1.6"/></symbol><symbol id="g-image" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3 16l5-5 4 4 2.6-2.6L21 18.8"/><circle cx="16" cy="9" r="1.6"/></symbol><symbol id="g-bubble" viewBox="0 0 24 24"><path d="M4 5h16v11H9.5L4 20z"/><path d="M8 9.2h8M8 12.4h5"/></symbol><symbol id="g-group" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3.1 2.7-5.2 6-5.2s6 2.1 6 5.2"/><circle cx="17" cy="9" r="2.4"/><path d="M15.6 14.1c3 .3 5.4 2.1 5.4 4.9"/></symbol><symbol id="g-browser" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="1.8"/><path d="M2.5 8h19"/><path d="M5.5 6h.01M7.8 6h.01M10.1 6h.01"/><path d="M12 18s-3.2-3.1-3.2-5.3a3.2 3.2 0 0 1 6.4 0c0 2.2-3.2 5.3-3.2 5.3z"/><circle cx="12" cy="12.6" r="1"/></symbol><symbol id="g-laptop" viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="10.5" rx="1.2"/><path d="M2 19h20l-1.6-3.2H3.6z"/><path d="M9.5 9.8l1.8 1.8 3.4-3.6"/></symbol><symbol id="g-flow" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M6 8.2v7.6M8 7l8 4M8 17l8-4"/></symbol></svg>
+<main class="deck" aria-label="ASAPify system diagrams">
+
+  <!-- 1 TITLE -->
+  <section class="slide slide--title" id="title" aria-label="Title">
+    <div class="title-grid">
+      <div class="title-copy">
+        <div class="lockup reveal" role="img" aria-label="ASAPify"><svg viewBox="0 0 551 454" aria-hidden="true"><defs><linearGradient id="flame" gradientUnits="userSpaceOnUse" x1="267.7" y1="6" x2="133.6" y2="298.5"><stop offset="0" style="stop-color:var(--brand-flame-hi)"/><stop offset="1" style="stop-color:var(--brand-flame-lo)"/></linearGradient></defs><path d="M66.7 339.5L223.1 53.1L247.7 53.8C241.7 70.2 231.5 86 223 101.4C210.1 124.7 197.6 148.3 184.7 171.6C166.5 204.1 149.2 237.2 131 269.8C126.5 277.7 113 306 108.2 310.8C104.2 314.8 97.6 317 92.9 320.2C83.9 326.3 75.3 333.4 66.7 339.5ZM369.4 178.2C358.4 161.6 349.7 142.9 340 125.4C333.8 114.2 321.3 94.3 317.1 83.3C315.8 80.1 313.7 59.2 312.8 54L326.7 53L381 151.9L369.4 178.2ZM134.5 411.9H25.7L37.5 390.6H121.6L145.4 347.5C170 334.1 199.1 329.1 226.4 323.5C262.7 316.1 300.6 306.2 332.4 286.6C358.1 270.8 378.7 249.7 394.4 224.1C399 216.6 402.8 208.1 407.4 201.1L416.7 218.3C409.7 233.6 401.1 248.7 390.4 261.8C343.8 318.7 281.3 335.2 210.9 342.5C197.7 343.9 184.2 343.7 171.1 345.3L134.5 411.9ZM524.2 411.9H415.4L377.4 340.4C388.4 328.7 401.4 318.7 411.8 306C422.9 292.4 431.2 276.5 441.4 262.9L484.7 340.5H458.9L438.2 302.3L428.6 315.5L449.9 354.7H492.6L504.4 376.2H437L413.6 333.5L403 344.1L428.3 390.6H512.5L524.2 411.9Z" style="fill:var(--brand-leaf)"/><path d="M113 376.2H45.5L57.3 354.8L70.2 354.5C102.2 328.3 132.1 311 172.3 300C226.9 285 287 280.5 333.5 244.7C363.8 221.2 372.9 200 388.6 167L399.2 185.6C371.6 263.4 302.7 292.5 227.7 308.5C190.3 316.5 133.3 327.5 105.2 354.2L124.6 354.7L113 376.2ZM155.6 447.6H6L17.8 426.2H142.9L179.6 358.6C192.9 356.7 206.9 357 220.4 355.5C276.3 349.4 335 335.1 377.2 295.7C390.4 283.4 401.9 269.4 411.4 254.1C415.9 246.9 419.8 238.9 424.4 232.2L433.5 248.5C425.9 267.1 413 284.8 399.5 299.8C357.5 347 298.4 364.8 237.8 373.4C223.3 375.5 208.5 375.9 194 377.5L155.6 447.6ZM394.4 447.6L346.2 358.3L364.8 348L407 426.2H531.9L544 447.6H394.4Z" style="fill:var(--brand-ink)"/><path d="M133.6 298.5C139.3 281.5 154.7 257.8 164 241C184.6 203.6 205.3 166.3 225.4 128.7C240.4 100.4 259.4 73 266.5 41.3C269.1 29.7 267.4 17.4 267.7 6C275.8 13.1 282.6 23 287.7 32.8C314.7 84.8 297.2 125 271.6 172.4C262.9 188.5 254.4 204.7 245.6 220.8C235.8 238.9 226.7 257.6 216 275.2L186.4 281.8C191.5 268.6 199.7 255.8 206.5 243.2C222.8 213 239.5 183 255.4 152.6C265.8 132.7 281.4 106.9 276 83.9L165.5 287.3L133.6 298.5ZM346 216.1L305.2 140.3L314.7 110.4L361 195.5L346 216.1ZM315.6 241.4L283.5 181.9L297.1 156.7L334.9 227.2L315.6 241.4Z" fill="url(#flame)"/></svg><svg class="word" viewBox="0 0 603.3 160.8" aria-hidden="true"><path d="M523 152.7L527.5 143.5C544.1 152.2 550.8 146.8 556.6 130.3L524.7 58.4L523.6 67H502.4V132.3H489.8V67H476.9L477.1 56.6L489.2 56.1C489.8 50.7 489.3 44.1 491.3 38.7C497.1 23 516.1 22.3 528.3 29.4L524.8 38.2C507.4 31.7 501.2 38.4 502.8 55.9L536.9 56.5L563.5 116.5L589.4 56.5L601.3 57.4C593.1 79.2 582.9 100.9 573.2 122.2C568.7 132.1 565.4 144.4 557.7 152.3C548.1 162.2 533.2 159.5 523 152.7ZM125.9 120.6L134.4 102.8C139.5 105.5 144.8 108.6 150.3 110.5C159.2 113.7 182.5 117.6 187.3 106.2C188 104.5 187.5 103.1 187.7 101.4C186.3 99.4 185.7 97.5 183.5 96C168.1 85.5 139.6 92.3 130 70.9C122.7 54.8 132.4 37.3 147.8 30.9C166.2 23.3 191.9 25.6 207.9 37L200 54.8C190 50.7 159.5 39 153.2 54.4C152.3 56.5 153 58.1 152.8 60.2C153.9 61.5 154.3 63 155.8 64.2C170.7 75.6 203.5 67.4 211.6 93.4C213.4 99.2 213 105.4 211.2 111.1C201.1 142.6 145.7 138.2 125.9 120.6ZM120.9 132.3H94.6L85.1 110.8H36.7L27.6 132.3H2L48.6 28.5H73.4L120.9 132.3ZM76.7 91.1L60.8 53.3L45.3 91.1H76.7ZM334.3 132.3H308L298.6 110.8H250.1L241 132.3H215.4L261.9 28.5H286.8L334.3 132.3ZM290.3 91.1L274.3 53.2L258.5 91.1H290.3ZM345 132.3V28.9C364.6 27.7 403.5 25.3 419.9 36C442.6 50.7 439.1 87.6 414.6 98.4C400.2 104.8 384.2 101.4 369.5 103.7V132.3H345ZM370.1 49V82.3C379.6 82.9 393.7 84.8 402.4 79.9C413.6 73.5 412.2 55.7 400.7 50.6C392.1 46.7 379.3 48.4 370.1 49ZM464.1 132.3H451.7V56.5L464.1 56.3V132.3Z" style="fill:var(--brand-ink)"/><circle cx="457.9" cy="33.8" r="10" style="fill:var(--brand-dot)"/></svg></div>
+        <h1 class="slide__display reveal">From a satellite pixel to a Telegram alert</h1>
+        <p class="slide__lede reveal">How ASAPify watches the peat of Sumatra and Kalimantan for fire, and where each part runs on Google Cloud.</p>
+        <p class="title-meta reveal">Google Cloud AI Builder Cup 2026. Development frozen on 18 October 2026; these diagrams describe that state.</p>
+      </div>
+      <figure class="title-art reveal">
+        <svg class="pixels" viewBox="-6 -6 424 294" role="img" aria-label="A grid of 2 km pixels: cool ground, a warm patch inside the dashed outline of mapped peat, one ringed hot pixel, and a small cloud bank bottom left."><rect x="0" y="0" width="22" height="22" rx="2" class="t0"/><rect x="26" y="0" width="22" height="22" rx="2" class="t0"/><rect x="52" y="0" width="22" height="22" rx="2" class="t0"/><rect x="78" y="0" width="22" height="22" rx="2" class="t0"/><rect x="104" y="0" width="22" height="22" rx="2" class="t0"/><rect x="130" y="0" width="22" height="22" rx="2" class="t0"/><rect x="156" y="0" width="22" height="22" rx="2" class="t1"/><rect x="182" y="0" width="22" height="22" rx="2" class="t0"/><rect x="208" y="0" width="22" height="22" rx="2" class="t0"/><rect x="234" y="0" width="22" height="22" rx="2" class="t1"/><rect x="260" y="0" width="22" height="22" rx="2" class="t1"/><rect x="286" y="0" width="22" height="22" rx="2" class="t1"/><rect x="312" y="0" width="22" height="22" rx="2" class="t1"/><rect x="338" y="0" width="22" height="22" rx="2" class="t0"/><rect x="364" y="0" width="22" height="22" rx="2" class="t1"/><rect x="390" y="0" width="22" height="22" rx="2" class="t1"/><rect x="0" y="26" width="22" height="22" rx="2" class="t0"/><rect x="26" y="26" width="22" height="22" rx="2" class="t0"/><rect x="52" y="26" width="22" height="22" rx="2" class="t0"/><rect x="78" y="26" width="22" height="22" rx="2" class="t0"/><rect x="104" y="26" width="22" height="22" rx="2" class="t0"/><rect x="130" y="26" width="22" height="22" rx="2" class="t0"/><rect x="156" y="26" width="22" height="22" rx="2" class="t0"/><rect x="182" y="26" width="22" height="22" rx="2" class="t1"/><rect x="208" y="26" width="22" height="22" rx="2" class="t1"/><rect x="234" y="26" width="22" height="22" rx="2" class="t1"/><rect x="260" y="26" width="22" height="22" rx="2" class="t2"/><rect x="286" y="26" width="22" height="22" rx="2" class="t1"/><rect x="312" y="26" width="22" height="22" rx="2" class="t2"/><rect x="338" y="26" width="22" height="22" rx="2" class="t1"/><rect x="364" y="26" width="22" height="22" rx="2" class="t1"/><rect x="390" y="26" width="22" height="22" rx="2" class="t0"/><rect x="0" y="52" width="22" height="22" rx="2" class="t0"/><rect x="26" y="52" width="22" height="22" rx="2" class="t0"/><rect x="52" y="52" width="22" height="22" rx="2" class="t1"/><rect x="78" y="52" width="22" height="22" rx="2" class="t1"/><rect x="104" y="52" width="22" height="22" rx="2" class="t0"/><rect x="130" y="52" width="22" height="22" rx="2" class="t1"/><rect x="156" y="52" width="22" height="22" rx="2" class="t0"/><rect x="182" y="52" width="22" height="22" rx="2" class="t1"/><rect x="208" y="52" width="22" height="22" rx="2" class="t2"/><rect x="234" y="52" width="22" height="22" rx="2" class="t2"/><rect x="260" y="52" width="22" height="22" rx="2" class="t3"/><rect x="286" y="52" width="22" height="22" rx="2" class="t3"/><rect x="312" y="52" width="22" height="22" rx="2" class="t3"/><rect x="338" y="52" width="22" height="22" rx="2" class="t2"/><rect x="364" y="52" width="22" height="22" rx="2" class="t1"/><rect x="390" y="52" width="22" height="22" rx="2" class="t1"/><rect x="0" y="78" width="22" height="22" rx="2" class="t0"/><rect x="26" y="78" width="22" height="22" rx="2" class="t0"/><rect x="52" y="78" width="22" height="22" rx="2" class="t0"/><rect x="78" y="78" width="22" height="22" rx="2" class="t0"/><rect x="104" y="78" width="22" height="22" rx="2" class="t1"/><rect x="130" y="78" width="22" height="22" rx="2" class="t0"/><rect x="156" y="78" width="22" height="22" rx="2" class="t2"/><rect x="182" y="78" width="22" height="22" rx="2" class="t1"/><rect x="208" y="78" width="22" height="22" rx="2" class="t2"/><rect x="234" y="78" width="22" height="22" rx="2" class="t4"/><rect x="260" y="78" width="22" height="22" rx="2" class="t4"/><rect x="286" y="78" width="22" height="22" rx="2" class="t4"/><rect x="312" y="78" width="22" height="22" rx="2" class="t4"/><rect x="338" y="78" width="22" height="22" rx="2" class="t3"/><rect x="364" y="78" width="22" height="22" rx="2" class="t1"/><rect x="390" y="78" width="22" height="22" rx="2" class="t0"/><rect x="0" y="104" width="22" height="22" rx="2" class="t0"/><rect x="26" y="104" width="22" height="22" rx="2" class="t0"/><rect x="52" y="104" width="22" height="22" rx="2" class="t0"/><rect x="78" y="104" width="22" height="22" rx="2" class="t0"/><rect x="104" y="104" width="22" height="22" rx="2" class="t0"/><rect x="130" y="104" width="22" height="22" rx="2" class="t0"/><rect x="156" y="104" width="22" height="22" rx="2" class="t2"/><rect x="182" y="104" width="22" height="22" rx="2" class="t1"/><rect x="208" y="104" width="22" height="22" rx="2" class="t3"/><rect x="234" y="104" width="22" height="22" rx="2" class="t4"/><rect x="260" y="104" width="22" height="22" rx="2" class="t5"/><rect x="286" y="104" width="22" height="22" rx="2" class="t5"/><rect x="312" y="104" width="22" height="22" rx="2" class="t5"/><rect x="338" y="104" width="22" height="22" rx="2" class="t4"/><rect x="364" y="104" width="22" height="22" rx="2" class="t3"/><rect x="390" y="104" width="22" height="22" rx="2" class="t0"/><rect x="0" y="130" width="22" height="22" rx="2" class="t1"/><rect x="26" y="130" width="22" height="22" rx="2" class="t0"/><rect x="52" y="130" width="22" height="22" rx="2" class="t0"/><rect x="78" y="130" width="22" height="22" rx="2" class="t0"/><rect x="104" y="130" width="22" height="22" rx="2" class="t0"/><rect x="130" y="130" width="22" height="22" rx="2" class="t0"/><rect x="156" y="130" width="22" height="22" rx="2" class="t1"/><rect x="182" y="130" width="22" height="22" rx="2" class="t2"/><rect x="208" y="130" width="22" height="22" rx="2" class="t3"/><rect x="234" y="130" width="22" height="22" rx="2" class="t4"/><rect x="260" y="130" width="22" height="22" rx="2" class="t5"/><rect x="286" y="130" width="22" height="22" rx="2" class="t5"/><rect x="312" y="130" width="22" height="22" rx="2" class="t5"/><rect x="338" y="130" width="22" height="22" rx="2" class="t4"/><rect x="364" y="130" width="22" height="22" rx="2" class="t2"/><rect x="390" y="130" width="22" height="22" rx="2" class="t2"/><rect x="0" y="156" width="22" height="22" rx="2" class="t0"/><rect x="26" y="156" width="22" height="22" rx="2" class="t0"/><rect x="52" y="156" width="22" height="22" rx="2" class="t0"/><rect x="78" y="156" width="22" height="22" rx="2" class="t0"/><rect x="104" y="156" width="22" height="22" rx="2" class="t1"/><rect x="130" y="156" width="22" height="22" rx="2" class="t1"/><rect x="156" y="156" width="22" height="22" rx="2" class="t0"/><rect x="182" y="156" width="22" height="22" rx="2" class="t2"/><rect x="208" y="156" width="22" height="22" rx="2" class="t2"/><rect x="234" y="156" width="22" height="22" rx="2" class="t4"/><rect x="260" y="156" width="22" height="22" rx="2" class="t5"/><rect x="286" y="156" width="22" height="22" rx="2" class="t4"/><rect x="312" y="156" width="22" height="22" rx="2" class="t4"/><rect x="338" y="156" width="22" height="22" rx="2" class="t2"/><rect x="364" y="156" width="22" height="22" rx="2" class="t1"/><rect x="390" y="156" width="22" height="22" rx="2" class="t1"/><rect x="0" y="182" width="22" height="22" rx="2" class="t0"/><rect x="26" y="182" width="22" height="22" rx="2" class="t0"/><rect x="52" y="182" width="22" height="22" rx="2" class="t0"/><rect x="78" y="182" width="22" height="22" rx="2" class="t0"/><rect x="104" y="182" width="22" height="22" rx="2" class="t0"/><rect x="130" y="182" width="22" height="22" rx="2" class="t0"/><rect x="156" y="182" width="22" height="22" rx="2" class="t1"/><rect x="182" y="182" width="22" height="22" rx="2" class="t0"/><rect x="208" y="182" width="22" height="22" rx="2" class="t1"/><rect x="234" y="182" width="22" height="22" rx="2" class="t2"/><rect x="260" y="182" width="22" height="22" rx="2" class="t2"/><rect x="286" y="182" width="22" height="22" rx="2" class="t3"/><rect x="312" y="182" width="22" height="22" rx="2" class="t2"/><rect x="338" y="182" width="22" height="22" rx="2" class="t2"/><rect x="364" y="182" width="22" height="22" rx="2" class="t1"/><rect x="390" y="182" width="22" height="22" rx="2" class="t1"/><rect x="0" y="208" width="22" height="22" rx="2" class="t0"/><rect x="26" y="208" width="22" height="22" rx="2" class="t0"/><rect x="52" y="208" width="22" height="22" rx="2" class="cl"/><rect x="78" y="208" width="22" height="22" rx="2" class="cl"/><rect x="104" y="208" width="22" height="22" rx="2" class="t0"/><rect x="130" y="208" width="22" height="22" rx="2" class="t1"/><rect x="156" y="208" width="22" height="22" rx="2" class="t0"/><rect x="182" y="208" width="22" height="22" rx="2" class="t0"/><rect x="208" y="208" width="22" height="22" rx="2" class="t2"/><rect x="234" y="208" width="22" height="22" rx="2" class="t1"/><rect x="260" y="208" width="22" height="22" rx="2" class="t2"/><rect x="286" y="208" width="22" height="22" rx="2" class="t1"/><rect x="312" y="208" width="22" height="22" rx="2" class="t2"/><rect x="338" y="208" width="22" height="22" rx="2" class="t0"/><rect x="364" y="208" width="22" height="22" rx="2" class="t0"/><rect x="390" y="208" width="22" height="22" rx="2" class="t1"/><rect x="0" y="234" width="22" height="22" rx="2" class="t0"/><rect x="26" y="234" width="22" height="22" rx="2" class="cl"/><rect x="52" y="234" width="22" height="22" rx="2" class="cl"/><rect x="78" y="234" width="22" height="22" rx="2" class="cl"/><rect x="104" y="234" width="22" height="22" rx="2" class="cl"/><rect x="130" y="234" width="22" height="22" rx="2" class="t0"/><rect x="156" y="234" width="22" height="22" rx="2" class="t1"/><rect x="182" y="234" width="22" height="22" rx="2" class="t1"/><rect x="208" y="234" width="22" height="22" rx="2" class="t1"/><rect x="234" y="234" width="22" height="22" rx="2" class="t1"/><rect x="260" y="234" width="22" height="22" rx="2" class="t1"/><rect x="286" y="234" width="22" height="22" rx="2" class="t0"/><rect x="312" y="234" width="22" height="22" rx="2" class="t0"/><rect x="338" y="234" width="22" height="22" rx="2" class="t1"/><rect x="364" y="234" width="22" height="22" rx="2" class="t0"/><rect x="390" y="234" width="22" height="22" rx="2" class="t0"/><rect x="0" y="260" width="22" height="22" rx="2" class="t0"/><rect x="26" y="260" width="22" height="22" rx="2" class="t0"/><rect x="52" y="260" width="22" height="22" rx="2" class="cl"/><rect x="78" y="260" width="22" height="22" rx="2" class="cl"/><rect x="104" y="260" width="22" height="22" rx="2" class="t0"/><rect x="130" y="260" width="22" height="22" rx="2" class="t0"/><rect x="156" y="260" width="22" height="22" rx="2" class="t0"/><rect x="182" y="260" width="22" height="22" rx="2" class="t0"/><rect x="208" y="260" width="22" height="22" rx="2" class="t0"/><rect x="234" y="260" width="22" height="22" rx="2" class="t1"/><rect x="260" y="260" width="22" height="22" rx="2" class="t0"/><rect x="286" y="260" width="22" height="22" rx="2" class="t0"/><rect x="312" y="260" width="22" height="22" rx="2" class="t1"/><rect x="338" y="260" width="22" height="22" rx="2" class="t0"/><rect x="364" y="260" width="22" height="22" rx="2" class="t0"/><rect x="390" y="260" width="22" height="22" rx="2" class="t0"/><polygon points="154,24 362,24 362,206 232,206 232,258 128,258 128,102 154,102" class="peat"/><rect x="281" y="99" width="32" height="32" rx="5" class="ring"/></svg>
+        <figcaption class="pixel-cap">One cell of 2 km pixels; the ringed one rose at 3.9 µm.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 2 DASHBOARD -->
+  <section class="slide" id="watch" aria-label="What ASAPify watches">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">What ASAPify watches</h2>
+      <p class="slide__sub">Peat burns slowly and smokes for weeks. ASAPify looks for unusual heat over mapped peat and tells people in a Telegram group when it finds some.</p></div></div>
+    <div class="kpis">
+      <div class="kpi reveal"><div class="kpi__val">65</div><div class="kpi__label">peat regions in 11 provinces of Sumatra and Kalimantan</div></div>
+      <div class="kpi reveal"><div class="kpi__val">2</div><div class="kpi__label">geostationary satellites, Himawari-9 and GK2A, each the other's backup</div></div>
+      <div class="kpi reveal"><div class="kpi__val">15 min</div><div class="kpi__label">between two ratings of every region</div></div>
+      <div class="kpi reveal"><div class="kpi__val">20–30</div><div class="kpi__label">minutes from a satellite scan to a status in the app</div></div>
+      <div class="kpi reveal"><div class="kpi__val">2 km</div><div class="kpi__label">satellite pixels, each one scored and marked on or off mapped peat</div></div>
+    </div>
+    <div class="status-strip reveal">
+      <div class="st st--safe"><b>Safe</b><span>No fire-like heat in the satellites that see the region.</span></div>
+      <div class="st st--warn"><b>Warning</b><span>Medium anomaly: closer watching, no AI check.</span></div>
+      <div class="st st--alert"><b>Alert</b><span>Strong anomaly: Gemini checks the evidence, an operator decides.</span></div>
+      <div class="st st--nobs"><b>Not observable</b><span>Cloud over 60 % in both views, or no data. Never counted as safe.</span></div>
+    </div>
+  </section>
+
+  <!-- 3 DIVIDER -->
+  <section class="slide slide--divider" id="d-how" aria-label="Part 1">
+    <span class="slide__number">01</span>
+    <div><h2 class="slide__heading reveal">How it works</h2>
+      <p class="slide__lede reveal">The whole system in five steps, for anyone opening the repository.</p></div>
+  </section>
+
+  <!-- 4 HOW IT WORKS -->
+  <section class="slide" id="how" aria-label="How ASAPify works in five steps">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">How ASAPify works, in five steps</h2>
+      <p class="slide__sub">Rules set every status. The AI only reads evidence, and a person decides what reaches the alert group.</p></div>
+      <div class="who-key" aria-label="Who acts"><span><i style="background:var(--who-rule)"></i>Rules</span><span><i style="background:var(--who-ai)"></i>AI agent</span><span><i style="background:var(--who-human)"></i>Person</span></div></div>
+    <ol class="pipeline reveal" aria-label="Steps">
+      <li class="pipeline__step by-rule">
+        <div class="pipeline__top"><span class="pipeline__num">1</span><span class="who">Rules</span></div>
+        <div class="pipeline__name">Two satellites look</div>
+        <div class="pipeline__desc">Himawari-9 and GK2A measure the heat of the ground every 10 minutes. ASAPify rates one scan of each region every 15 minutes.</div>
+        <div class="pipeline__src"><span class="chip">Himawari-9</span><span class="chip">GK2A</span></div>
+      </li>
+      <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+      <li class="pipeline__step by-rule">
+        <div class="pipeline__top"><span class="pipeline__num">2</span><span class="who">Rules</span></div>
+        <div class="pipeline__name">Find unusual heat</div>
+        <div class="pipeline__desc">Each 2 km pixel is compared with the clear pixels around it. It counts only if the 3.9 µm channel itself rose, so thin cloud is not taken for fire.</div>
+        <div class="pipeline__src"><span class="chip">3.9 µm</span><span class="chip">10.4 µm</span></div>
+      </li>
+      <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+      <li class="pipeline__step by-rule">
+        <div class="pipeline__top"><span class="pipeline__num">3</span><span class="who">Rules</span></div>
+        <div class="pipeline__name">Set the status</div>
+        <div class="pipeline__desc">The two views are combined, then dry air lowers the bar and humid air or the midday sun raise it: Safe, Warning or Alert. Satellite hotspots can only raise an Alert.</div>
+        <div class="pipeline__src"><span class="chip">NASA POWER</span><span class="chip">Open-Meteo</span><span class="chip">FIRMS</span></div>
+      </li>
+      <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+      <li class="pipeline__step by-ai">
+        <div class="pipeline__top"><span class="pipeline__num">4</span><span class="who">Gemini</span></div>
+        <div class="pipeline__name">Check the evidence</div>
+        <div class="pipeline__desc">On Alert, a Gemini agent looks at NASA FIRMS hotspots, two NASA GIBS images and the weather, and answers Confirmed, Rejected or Needs review. It cannot change the status.</div>
+        <div class="pipeline__src"><span class="chip">FIRMS</span><span class="chip">GIBS</span><span class="chip">Open-Meteo</span></div>
+      </li>
+      <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+      <li class="pipeline__step by-human">
+        <div class="pipeline__top"><span class="pipeline__num">5</span><span class="who">Operator</span></div>
+        <div class="pipeline__name">A person decides</div>
+        <div class="pipeline__desc">An operator publishes or rejects. Published alerts go to the Telegram group; a confirmed alert nobody decided on goes out after 2 hours, marked as not reviewed.</div>
+        <div class="pipeline__src"><span class="chip">Telegram</span></div>
+      </li>
+    </ol>
+    <div class="outcomes reveal">
+      <div class="outcome"><svg viewBox="0 0 24 24"><use href="#g-browser"/></svg><div><b>Everyone sees the live map</b><span>Status of all 65 regions, hot pixels, region pages and every archived day, without signing in.</span></div></div>
+      <div class="outcome"><svg viewBox="0 0 24 24"><use href="#g-group"/></svg><div><b>Group members get the alerts</b><span>Each published alert in the ASAPify Telegram group, with the place, time and a map link.</span></div></div>
+    </div>
+  </section>
+
+  <!-- 5 TIMELINE -->
+  <section class="slide" id="timeline" aria-label="Who decides, and when">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">Who decides, and when</h2>
+      <p class="slide__sub">One alert from scan to group. The spacing is not to scale.</p></div>
+      <div class="who-key"><span><i style="background:var(--who-rule)"></i>Rules</span><span><i style="background:var(--who-ai)"></i>AI agent</span><span><i style="background:var(--who-human)"></i>Operator</span><span><i style="background:var(--who-auto)"></i>Automatic</span></div></div>
+    <ol class="tl reveal">
+      <li class="tl__ev by-rule"><div class="tl__when">0 min</div><div class="tl__what">Himawari-9 and GK2A <b>scan the peat</b>.</div></li>
+      <li class="tl__ev by-rule"><div class="tl__when">+20–30 min</div><div class="tl__what">The scan reaches ASAPify and the rules <b>set the status</b>.</div></li>
+      <li class="tl__ev by-ai"><div class="tl__when">Same tick</div><div class="tl__what">Entering Alert <b>starts the Gemini agent</b>: once a region a day, 20 runs a day in all.</div></li>
+      <li class="tl__ev by-human"><div class="tl__when">Minutes later</div><div class="tl__what">The verification is ready: an operator can <b>publish or reject</b> it.</div></li>
+      <li class="tl__ev by-auto"><div class="tl__when">+2 h after it</div><div class="tl__what">Confirmed, still Alert and undecided: ASAPify <b>posts it itself</b>, marked not reviewed.</div></li>
+      <li class="tl__ev is-end"><div class="tl__when">+12 h after the scan</div><div class="tl__what">Publishing <b>closes</b>; rejecting still works, and the agent can run again.</div></li>
+    </ol>
+    <div class="rules3 reveal">
+      <div class="rule3"><b>The status comes from data and rules.</b><span>Nothing the AI writes changes Safe, Warning or Alert.</span></div>
+      <div class="rule3"><b>Gemini reads evidence for the operator.</b><span>Its numbers are checked against what its tool returned before they are stored.</span></div>
+      <div class="rule3"><b>Only a confirmed alert goes out by itself.</b><span>Needs review and Rejected wait for a person; whoever decides first wins.</span></div>
+    </div>
+  </section>
+
+  <!-- 6 DIVIDER -->
+  <section class="slide slide--divider" id="d-cloud" aria-label="Part 2">
+    <span class="slide__number">02</span>
+    <div><h2 class="slide__heading reveal">Where it runs</h2>
+      <p class="slide__lede reveal">Google Cloud project hack2skill-510921, in Jakarta, with Gemini on the global endpoint.</p></div>
+  </section>
+
+  <!-- 7 GCP DRAWING -->
+  <section class="slide slide--gcp" id="gcp" aria-label="ASAPify on Google Cloud">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">ASAPify on Google Cloud</h2>
+      <p class="slide__sub">Open data comes in on the right, people use it on the left. Every arrow is a real call in the deployed system.</p></div></div>
+    <div class="gcp-wrap reveal"><svg class="gcp" viewBox="0 0 1600 900" role="img" aria-labelledby="gcp-t gcp-d" preserveAspectRatio="xMidYMid meet"><title id="gcp-t">ASAPify on Google Cloud</title><desc id="gcp-d">Visitors and operators reach Firebase Hosting, which serves the app and rewrites API calls to the Cloud Run service asapify-api; operators sign in with Firebase Auth. Both Cloud Run services read and write Firestore and get secrets from Secret Manager. Cloud Scheduler runs the private worker asapify-notify every 15 minutes; it reads Himawari-9 and GK2A from NOAA Open Data on AWS, NASA FIRMS, NASA GIBS, NASA POWER and Open-Meteo. The ADK agent calls Gemini 3.5 Flash. Published alerts go through Cloud Tasks to the worker, which posts them with the Telegram Bot API in the ASAPify alert group. GitHub Actions deploy through Workload Identity Federation and Artifact Registry.</desc><rect x="20" y="20" width="230" height="420" rx="6" class="zone z-people"/><text x="135.0" y="50" class="zone-title" text-anchor="middle">People</text><rect x="20" y="460" width="230" height="420" rx="6" class="zone z-git"/><text x="135.0" y="490" class="zone-title" text-anchor="middle">GitHub</text><rect x="270" y="20" width="1000" height="860" rx="6" class="zone z-cloud"/><text x="770.0" y="50" class="zone-title" text-anchor="middle">Google Cloud project hack2skill-510921, Jakarta (asia-southeast2)</text><rect x="1290" y="20" width="290" height="520" rx="6" class="zone z-data"/><text x="1435.0" y="50" class="zone-title" text-anchor="middle">Open data</text><rect x="1290" y="560" width="290" height="320" rx="6" class="zone z-tg"/><text x="1435.0" y="590" class="zone-title" text-anchor="middle">Telegram</text><g class="node"><rect x="90.0" y="95.0" width="90" height="86" rx="10" class="dev-bg"/><use href="#g-browser" x="98.0" y="101.0" width="74" height="74" class="dev"/><text x="135" y="205.0" class="n-name" text-anchor="middle">Visitors</text><text x="135" y="223.0" class="n-sub" text-anchor="middle">map and regions, no sign-in</text></g><g class="node"><rect x="90.0" y="275.0" width="90" height="86" rx="10" class="dev-bg"/><use href="#g-laptop" x="98.0" y="281.0" width="74" height="74" class="dev"/><text x="135" y="385.0" class="n-name" text-anchor="middle">Operators</text><text x="135" y="403.0" class="n-sub" text-anchor="middle">Google sign-in</text></g><g class="node"><rect x="99.0" y="546.0" width="72" height="68" rx="10" class="dev-bg"/><use href="#g-flow" x="107.0" y="552.0" width="56" height="56" class="dev"/><text x="135" y="638.0" class="n-name" text-anchor="middle">Frontend workflow</text><text x="135" y="656.0" class="n-sub" text-anchor="middle">build, Firebase Hosting</text></g><g class="node"><rect x="99.0" y="726.0" width="72" height="68" rx="10" class="dev-bg"/><use href="#g-flow" x="107.0" y="732.0" width="56" height="56" class="dev"/><text x="135" y="818.0" class="n-name" text-anchor="middle">Backend workflow</text><text x="135" y="836.0" class="n-sub" text-anchor="middle">test, image, Cloud Run</text></g><rect x="300" y="80" width="440" height="196" rx="8" class="grp"/><text x="314" y="102" class="grp-cap" text-anchor="start">Web and sign-in</text><g class="node"><polygon points="380.0,118.0 409.4,135.0 409.4,169.0 380.0,186.0 350.6,169.0 350.6,135.0" class="hex"/><use href="#g-globe" x="365" y="137" width="30" height="30" class="glyph"/><text x="380" y="209" class="n-name" text-anchor="middle">Firebase Hosting</text><text x="380" y="228" class="n-sub" text-anchor="middle">app and CDN</text></g><g class="node"><polygon points="530.0,118.0 559.4,135.0 559.4,169.0 530.0,186.0 500.6,169.0 500.6,135.0" class="hex"/><use href="#g-userkey" x="515" y="137" width="30" height="30" class="glyph"/><text x="530" y="209" class="n-name" text-anchor="middle">Firebase Auth</text><text x="530" y="228" class="n-sub" text-anchor="middle">Google sign-in</text></g><g class="node"><polygon points="680.0,118.0 709.4,135.0 709.4,169.0 680.0,186.0 650.6,169.0 650.6,135.0" class="hex"/><use href="#g-shield" x="665" y="137" width="30" height="30" class="glyph"/><text x="680" y="209" class="n-name" text-anchor="middle">reCAPTCHA</text><text x="680" y="228" class="n-sub" text-anchor="middle">Enterprise</text></g><rect x="820" y="80" width="420" height="196" rx="8" class="grp"/><text x="834" y="102" class="grp-cap" text-anchor="start">AI verification</text><g class="node"><polygon points="930.0,118.0 959.4,135.0 959.4,169.0 930.0,186.0 900.6,169.0 900.6,135.0" class="hex hex-dash"/><use href="#g-agent" x="915" y="137" width="30" height="30" class="glyph glyph-dash"/><text x="930" y="209" class="n-name" text-anchor="middle">ADK agent</text><text x="930" y="228" class="n-sub" text-anchor="middle">runs in Cloud Run</text></g><g class="node"><polygon points="1130.0,118.0 1159.4,135.0 1159.4,169.0 1130.0,186.0 1100.6,169.0 1100.6,135.0" class="hex"/><use href="#g-chip" x="1115" y="137" width="30" height="30" class="glyph"/><text x="1130" y="209" class="n-name" text-anchor="middle">Gemini 3.5 Flash</text><text x="1130" y="228" class="n-sub" text-anchor="middle">Agent Platform, global</text></g><rect x="300" y="352" width="440" height="196" rx="8" class="grp"/><text x="314" y="374" class="grp-cap" text-anchor="start">Data</text><g class="node"><polygon points="430.0,390.0 459.4,407.0 459.4,441.0 430.0,458.0 400.6,441.0 400.6,407.0" class="hex"/><use href="#g-db" x="415" y="409" width="30" height="30" class="glyph"/><text x="430" y="481" class="n-name" text-anchor="middle">Firestore</text><text x="430" y="500" class="n-sub" text-anchor="middle">database asapify</text></g><g class="node"><polygon points="610.0,390.0 639.4,407.0 639.4,441.0 610.0,458.0 580.6,441.0 580.6,407.0" class="hex"/><use href="#g-key" x="595" y="409" width="30" height="30" class="glyph"/><text x="610" y="481" class="n-name" text-anchor="middle">Secret Manager</text><text x="610" y="500" class="n-sub" text-anchor="middle">FIRMS key, bot token</text></g><rect x="820" y="352" width="420" height="196" rx="8" class="grp"/><text x="834" y="374" class="grp-cap" text-anchor="start">Cloud Run</text><g class="node"><polygon points="960.0,390.0 989.4,407.0 989.4,441.0 960.0,458.0 930.6,441.0 930.6,407.0" class="hex"/><use href="#g-api" x="945" y="409" width="30" height="30" class="glyph"/><text x="960" y="481" class="n-name" text-anchor="middle">asapify-api</text><text x="960" y="500" class="n-sub" text-anchor="middle">public, operator API</text></g><g class="node"><polygon points="1140.0,390.0 1169.4,407.0 1169.4,441.0 1140.0,458.0 1110.6,441.0 1110.6,407.0" class="hex"/><use href="#g-gear" x="1125" y="409" width="30" height="30" class="glyph"/><text x="1140" y="481" class="n-name" text-anchor="middle">asapify-notify</text><text x="1140" y="500" class="n-sub" text-anchor="middle">private worker</text></g><rect x="300" y="624" width="440" height="196" rx="8" class="grp"/><text x="314" y="646" class="grp-cap" text-anchor="start">Build and observe</text><g class="node"><polygon points="380.0,662.0 409.4,679.0 409.4,713.0 380.0,730.0 350.6,713.0 350.6,679.0" class="hex"/><use href="#g-badge" x="365" y="681" width="30" height="30" class="glyph"/><text x="380" y="753" class="n-name" text-anchor="middle">Workload Identity</text><text x="380" y="772" class="n-sub" text-anchor="middle">Federation, no keys</text></g><g class="node"><polygon points="530.0,662.0 559.4,679.0 559.4,713.0 530.0,730.0 500.6,713.0 500.6,679.0" class="hex"/><use href="#g-box" x="515" y="681" width="30" height="30" class="glyph"/><text x="530" y="753" class="n-name" text-anchor="middle">Artifact Registry</text><text x="530" y="772" class="n-sub" text-anchor="middle">image gh-&lt;sha&gt;</text></g><g class="node"><polygon points="680.0,662.0 709.4,679.0 709.4,713.0 680.0,730.0 650.6,713.0 650.6,679.0" class="hex"/><use href="#g-logs" x="665" y="681" width="30" height="30" class="glyph"/><text x="680" y="753" class="n-name" text-anchor="middle">Cloud Logging</text><text x="680" y="772" class="n-sub" text-anchor="middle">JSON lines</text></g><rect x="820" y="624" width="420" height="196" rx="8" class="grp"/><text x="834" y="646" class="grp-cap" text-anchor="start">Clock and queue</text><g class="node"><polygon points="960.0,662.0 989.4,679.0 989.4,713.0 960.0,730.0 930.6,713.0 930.6,679.0" class="hex"/><use href="#g-queue" x="945" y="681" width="30" height="30" class="glyph"/><text x="960" y="753" class="n-name" text-anchor="middle">Cloud Tasks</text><text x="960" y="772" class="n-sub" text-anchor="middle">one job per group</text></g><g class="node"><polygon points="1140.0,662.0 1169.4,679.0 1169.4,713.0 1140.0,730.0 1110.6,713.0 1110.6,679.0" class="hex"/><use href="#g-clock" x="1125" y="681" width="30" height="30" class="glyph"/><text x="1140" y="753" class="n-name" text-anchor="middle">Cloud Scheduler</text><text x="1140" y="772" class="n-sub" text-anchor="middle">every 15 min, 1 min</text></g><g class="node"><circle cx="1328" cy="100" r="23" class="ext"/><use href="#g-sat" x="1315" y="87" width="26" height="26" class="ext-glyph"/><text x="1364" y="97" class="n-name" text-anchor="start">Himawari-9, GK2A</text><text x="1364" y="116" class="n-sub" text-anchor="start">NOAA Open Data on AWS</text></g><g class="node"><circle cx="1328" cy="192" r="23" class="ext"/><use href="#g-flame" x="1315" y="179" width="26" height="26" class="ext-glyph"/><text x="1364" y="189" class="n-name" text-anchor="start">NASA FIRMS</text><text x="1364" y="208" class="n-sub" text-anchor="start">VIIRS hotspots</text></g><g class="node"><circle cx="1328" cy="284" r="23" class="ext"/><use href="#g-image" x="1315" y="271" width="26" height="26" class="ext-glyph"/><text x="1364" y="281" class="n-name" text-anchor="start">NASA GIBS</text><text x="1364" y="300" class="n-sub" text-anchor="start">VIIRS images</text></g><g class="node"><circle cx="1328" cy="376" r="23" class="ext"/><use href="#g-drop" x="1315" y="363" width="26" height="26" class="ext-glyph"/><text x="1364" y="373" class="n-name" text-anchor="start">NASA POWER</text><text x="1364" y="392" class="n-sub" text-anchor="start">humidity normal</text></g><g class="node"><circle cx="1328" cy="468" r="23" class="ext"/><use href="#g-cloud" x="1315" y="455" width="26" height="26" class="ext-glyph"/><text x="1364" y="465" class="n-name" text-anchor="start">Open-Meteo</text><text x="1364" y="484" class="n-sub" text-anchor="start">humidity, weather</text></g><g class="node"><circle cx="1328" cy="650" r="23" class="ext"/><use href="#g-bubble" x="1315" y="637" width="26" height="26" class="ext-glyph"/><text x="1364" y="647" class="n-name" text-anchor="start">Telegram Bot API</text><text x="1364" y="666" class="n-sub" text-anchor="start">sendMessage</text></g><g class="node"><circle cx="1328" cy="800" r="23" class="ext"/><use href="#g-group" x="1315" y="787" width="26" height="26" class="ext-glyph"/><text x="1364" y="797" class="n-name" text-anchor="start">ASAPify alert group</text><text x="1364" y="816" class="n-sub" text-anchor="start">anyone can join</text></g><path d="M176 138L309.0 138.0Q316 138 316.0 145.0L316.0 145.0Q316 152 323.0 152.0L348 152" class="wire" marker-end="url(#arr)"/><rect x="219.2" y="118" width="53.5" height="19" rx="9.5" class="pill"/><text x="246" y="132" class="w-label" text-anchor="middle">HTTPS</text><path d="M176 318L518.0 318.0Q530 318 530.0 306.0L530 236" class="wire" marker-end="url(#arr)"/><rect x="369.5" y="298" width="121.0" height="19" rx="9.5" class="pill"/><text x="430" y="312" class="w-label" text-anchor="middle">Google sign-in</text><path d="M740 214L768.0 214.0Q780 214 780.0 226.0L780.0 300.0Q780 312 792.0 312.0L948.0 312.0Q960 312 960.0 324.0L960 386" class="wire" marker-end="url(#arr)"/><rect x="807.8" y="292" width="128.5" height="19" rx="9.5" class="pill"/><text x="872" y="306" class="w-label" text-anchor="middle">/api/** rewrite</text><path d="M820 450L740 450" class="wire" marker-end="url(#arr)" marker-start="url(#arr)"/><rect x="757.0" y="421" width="46.0" height="19" rx="9.5" class="pill"/><text x="780" y="435" class="w-label" text-anchor="middle">data</text><path d="M1050 352L1050 276" class="wire" marker-end="url(#arr)"/><rect x="1051.0" y="305" width="91.0" height="19" rx="9.5" class="pill"/><text x="1058" y="319" class="w-label" text-anchor="start">agent runs</text><path d="M963 152L1097 152" class="wire" marker-end="url(#arr)"/><rect x="969.5" y="119" width="121.0" height="19" rx="9.5" class="pill"/><text x="1030" y="133" class="w-label" text-anchor="middle">prompt, images</text><path d="M1290 290L1274.0 290.0Q1262 290 1262.0 302.0L1262.0 412.0Q1262 424 1250.0 424.0L1173 424" class="wire" marker-end="url(#arr)"/><rect x="1184.8" y="398" width="68.5" height="19" rx="9.5" class="pill"/><text x="1219" y="412" class="w-label" text-anchor="middle">data in</text><path d="M1240 520L1251.0 520.0Q1262 520 1262.0 531.0L1262.0 638.0Q1262 650 1274.0 650.0L1305 650" class="wire" marker-end="url(#arr)"/><rect x="1201.0" y="583" width="61.0" height="19" rx="9.5" class="pill"/><text x="1255" y="597" class="w-label" text-anchor="end">alerts</text><path d="M1328 674L1328 776" class="wire" marker-end="url(#arr)"/><path d="M960 506L960 658" class="wire" marker-end="url(#arr)"/><rect x="961.0" y="577" width="91.0" height="19" rx="9.5" class="pill"/><text x="968" y="591" class="w-label" text-anchor="start">alert jobs</text><path d="M993 696L1038.0 696.0Q1050 696 1050.0 684.0L1050 548" class="wire" marker-end="url(#arr)"/><rect x="1051.0" y="597" width="76.0" height="19" rx="9.5" class="pill"/><text x="1058" y="611" class="w-label" text-anchor="start">dispatch</text><path d="M1140 658L1140 548" class="wire" marker-end="url(#arr)"/><rect x="1141.0" y="597" width="53.5" height="19" rx="9.5" class="pill"/><text x="1148" y="611" class="w-label" text-anchor="start">ticks</text><path d="M176 760L278.0 760.0Q290 760 290.0 748.0L290.0 708.0Q290 696 302.0 696.0L347 696" class="wire wire-dash" marker-end="url(#arr-dash)"/><rect x="176.8" y="739" width="98.5" height="19" rx="9.5" class="pill"/><text x="226" y="753" class="w-label" text-anchor="middle">image build</text><path d="M413 696L497 696" class="wire wire-dash" marker-end="url(#arr-dash)"/><path d="M530 658L530.0 608.0Q530 596 542.0 596.0L848.0 596.0Q860 596 860.0 584.0L860 548" class="wire wire-dash" marker-end="url(#arr-dash)"/><rect x="658.2" y="576" width="83.5" height="19" rx="9.5" class="pill"/><text x="700" y="590" class="w-label" text-anchor="middle">new image</text><path d="M176 580L273.0 580.0Q285 580 285.0 568.0L285.0 312.0Q285 300 297.0 300.0L338.0 300.0Q350 300 350.0 288.0L350 244" class="wire wire-dash" marker-end="url(#arr-dash)"/><rect x="220.8" y="439" width="128.5" height="19" rx="9.5" class="pill"/><text x="285" y="453" class="w-label" text-anchor="middle">Hosting release</text><path d="M300 852h40" class="wire" marker-end="url(#arr)"/><text x="350" y="857" class="legend" text-anchor="start">runtime flow</text><path d="M470 852h40" class="wire wire-dash" marker-end="url(#arr-dash)"/><text x="520" y="857" class="legend" text-anchor="start">deploy from GitHub Actions, signed in with OIDC</text><polygon points="880,840 890.4,846 890.4,858 880,864 869.6,858 869.6,846" class="hex hex-dash"/><text x="900" y="857" class="legend" text-anchor="start">code inside Cloud Run, not a service</text></svg></div>
+  </section>
+
+  <!-- 8 SERVICES 1 -->
+  <section class="slide slide--table" id="services-1" aria-label="Google Cloud services, serving and data">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">What each Google Cloud service does: serving and data</h2></div></div>
+    <div class="table-wrap reveal"><div class="table-scroll"><table class="data-table">
+      <thead><tr><th>Service</th><th>Job in ASAPify</th><th>Set up as</th></tr></thead>
+      <tbody>
+        <tr><td>Firebase Hosting</td><td class="wrap">Serves the React app and rewrites <code>/api/**</code> to <code>asapify-api</code>; its CDN caches the public answers</td><td class="wrap">hack2skill-510921.web.app; public routes cached 120 s, past days 1 day</td></tr>
+        <tr><td>Firebase Authentication</td><td class="wrap">Google sign-in for operators</td><td class="wrap">Custom claim <code>role=operator</code>; revoked tokens refused</td></tr>
+        <tr><td>reCAPTCHA Enterprise</td><td class="wrap">Lets a signed-in judge become an operator during the judging period</td><td class="wrap">Only while <code>OPERATOR_SIGNUP_UNTIL</code> is set</td></tr>
+        <tr><td>Cloud Run <code>asapify-api</code></td><td class="wrap">Public and operator API, and the Telegram webhook</td><td class="wrap">Jakarta, 1 vCPU, 512 MiB, 0 to 2 instances</td></tr>
+        <tr><td>Cloud Run <code>asapify-notify</code></td><td class="wrap">Private worker: satellite and POWER ticks, agent runs, Telegram posts, the sweep</td><td class="wrap">Same image, 1 GiB, 300 s timeout, callable only by its scheduler and queue accounts</td></tr>
+        <tr><td>Firestore</td><td class="wrap">Every region state, slot, day, verification, alert and delivery job</td><td class="wrap">Native mode, database <code>asapify</code>, Jakarta; no direct browser access</td></tr>
+        <tr><td>Secret Manager</td><td class="wrap">Keys the services read at start</td><td class="wrap"><code>firms-map-key</code>, <code>telegram-bot-token</code> (worker), <code>telegram-webhook-secret</code> (API)</td></tr>
+      </tbody></table></div></div>
+  </section>
+
+  <!-- 9 SERVICES 2 -->
+  <section class="slide slide--table" id="services-2" aria-label="Google Cloud services, clock, AI and delivery">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">What each Google Cloud service does: clock, AI and delivery</h2></div></div>
+    <div class="table-wrap reveal"><div class="table-scroll"><table class="data-table">
+      <thead><tr><th>Service</th><th>Job in ASAPify</th><th>Set up as</th></tr></thead>
+      <tbody>
+        <tr><td>Cloud Scheduler</td><td class="wrap">Drives the engine and the delivery recovery</td><td class="wrap"><code>asapify-geo-tick</code> at minutes 5, 20, 35, 50; <code>asapify-engine-tick</code> every 15 minutes; <code>asapify-notification-recovery</code> every minute</td></tr>
+        <tr><td>Cloud Tasks</td><td class="wrap">Carries each Telegram post to the worker</td><td class="wrap">Queue <code>asapify-notifications</code>, OIDC as <code>asapify-task</code></td></tr>
+        <tr><td>Gemini Enterprise Agent Platform</td><td class="wrap">Gemini 3.5 Flash for the verification agent built with the Agent Development Kit</td><td class="wrap">Location <code>global</code>; a hard quota of 20 runs a day</td></tr>
+        <tr><td>Artifact Registry</td><td class="wrap">One Docker image for both Cloud Run services</td><td class="wrap"><code>asapify/api</code>, tagged <code>gh-</code> plus the commit</td></tr>
+        <tr><td>Cloud Logging</td><td class="wrap">Structured JSON lines: ticks, webhook outcomes, automatic publications</td><td class="wrap">The webhook log never holds a code, chat id or message text</td></tr>
+        <tr><td>IAM and Workload Identity Federation</td><td class="wrap">GitHub Actions deploy without a service-account key</td><td class="wrap">Pool <code>github-actions</code>; <code>asapify-be-deployer</code> and <code>asapify-firebase-deployer</code></td></tr>
+      </tbody></table></div></div>
+  </section>
+
+  <!-- 10 THREE PATHS -->
+  <section class="slide" id="paths" aria-label="Three paths through the system">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">Three paths through the system</h2>
+      <p class="slide__sub">Blue squares are Google Cloud services; grey ones are outside it.</p></div></div>
+    <div class="paths reveal">
+      <article class="path"><h3>Every 15 minutes</h3><p>The engine rates all 65 regions.</p><ol>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-clock"/></svg><div><b>Cloud Scheduler wakes the worker</b><span>A private call with OIDC, at minutes 5, 20, 35 and 50.</span></div></li>
+        <li><svg viewBox="0 0 24 24"><use href="#g-sat"/></svg><div><b>It reads the newest scan</b><span>Himawari-9 and GK2A from NOAA Open Data on AWS, the one both have published.</span></div></li>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-gear"/></svg><div><b>asapify-notify rates every region</b><span>Anomaly, fusion, dryness and sun shifts, Safe to Alert.</span></div></li>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-db"/></svg><div><b>Firestore keeps the result</b><span>Status, slot record, status changes and the day archive in one batch.</span></div></li>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-chip"/></svg><div><b>New Alerts get the agent</b><span>Gemini runs while time is left in the tick; the rest wait for the next one.</span></div></li>
+      </ol></article>
+      <article class="path"><h3>Someone opens the map</h3><p>No sign-in; the CDN answers most requests.</p><ol>
+        <li><svg viewBox="0 0 24 24"><use href="#g-browser"/></svg><div><b>The browser asks Firebase Hosting</b><span>The app's files, then <code>/api/v1/public/regions</code>.</span></div></li>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-globe"/></svg><div><b>The Hosting CDN answers</b><span>From its cache for up to 120 s; a past day for 1 day.</span></div></li>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-api"/></svg><div><b>Otherwise asapify-api reads Firestore</b><span>Without operator emails, notes or actions.</span></div></li>
+        <li><svg viewBox="0 0 24 24"><use href="#g-image"/></svg><div><b>MapLibre draws the map</b><span>Regions, hot pixels and VIIRS on the OpenFreeMap basemap.</span></div></li>
+      </ol></article>
+      <article class="path"><h3>An alert is published</h3><p>An operator, or the 2-hour rule.</p><ol>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-userkey"/></svg><div><b>The operator signs in with Google</b><span>Firebase Auth; the API checks <code>role=operator</code>.</span></div></li>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-db"/></svg><div><b>One Firestore transaction</b><span>Decision, audit entry and alert together; a second decision is refused.</span></div></li>
+        <li class="gcp-step"><svg viewBox="0 0 24 24"><use href="#g-queue"/></svg><div><b>Cloud Tasks carries one job per group</b><span>To the private worker, with OIDC; chat ids never enter a task.</span></div></li>
+        <li><svg viewBox="0 0 24 24"><use href="#g-bubble"/></svg><div><b>Telegram receives the post</b><span>sendMessage in the group. Every minute the sweep queues what is still pending; it never resends blindly.</span></div></li>
+      </ol></article>
+    </div>
+  </section>
+
+  <!-- 11 DIVIDER -->
+  <section class="slide slide--divider" id="d-be" aria-label="Part 3">
+    <span class="slide__number">03</span>
+    <div><h2 class="slide__heading reveal">Backend</h2>
+      <p class="slide__lede reveal"><code>ktp-asapify-be</code>: FastAPI on Cloud Run, the risk engine and the Gemini agent.</p></div>
+  </section>
+
+  <!-- 12 RATING ONE SLOT -->
+  <section class="slide" id="rating" aria-label="Rating one slot">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">Rating one slot, every 15 minutes</h2>
+      <p class="slide__sub"><code>POST /_internal/engine/geo-tick</code> on the worker, in <code>asapify_engine/geo.py</code>. Starting values, not yet calibrated.</p></div></div>
+    <div class="snake reveal">
+      <div class="card"><span class="n">1</span><b>Pick the slot</b><p>The newest 10-minute scan both satellites have published. Agent runs left over from the last tick go first.</p></div>
+      <div class="card"><span class="n">2</span><b>Read both satellites</b><p>Himawari-9 B07 and B13, GK2A SW038 and IR105, from NOAA Open Data on AWS (<code>satellites.py</code>).</p></div>
+      <div class="card hot"><span class="n">3</span><b>Contextual anomaly</b><p>ΔBT = 3.9 µm − 10.4 µm against the clear pixels of the same cell: ≥ 3 K and ≥ 3σ, and 3.9 µm up ≥ 2 K and ≥ 3σ.</p></div>
+      <div class="card"><span class="n">4</span><b>Cloud check</b><p>Cloud read from the 10.4 µm channel.</p><div class="branch">Over 60 % in both views: Not observable.</div></div>
+      <div class="card"><span class="n">5</span><b>Fuse the views</b><p>ΔT is the mean of the views that see the region, weighted by clear share; the stronger view joins as a second attribute.</p></div>
+      <div class="card"><span class="n">6</span><b>Shift for air and sun</b><p>ΔT counted = ΔT + 1 K·tanh(dry z / 2) − 1 K·sin(sun elevation); humidity against its NASA POWER normal.</p></div>
+      <div class="card"><span class="n">7</span><b>Fuzzy rules</b><p>Trapezoids give Safe, Warning, Alert; Fuzzy MAUT weighs the mean 0.6 and the strongest view up to 0.4. Safe &lt; 1.95 K ≤ Warning &lt; 6.95 K ≤ Alert.</p></div>
+      <div class="card"><span class="n">8</span><b>Support</b><p>VIIRS hotspots near a hot pixel and NASA POWER skin temperature can only raise Alert, never lower it.</p></div>
+      <div class="card"><span class="n">9</span><b>Save it</b><p>State machine, slot record, status change and the day archive, in one Firestore batch (<code>fsm.py</code>, <code>repo.py</code>).</p></div>
+      <div class="card hot"><span class="n">10</span><b>Ask the agent</b><p>A region that entered Alert queues a Gemini run.</p><div class="branch alert">Once per region in 24 h, 20 runs a day, 60 s of the tick left.</div></div>
+    </div>
+    <div class="snake-foot reveal">
+      <span><b>NASA POWER tick</b>, every 15 min: new hours per region, dryness z and the humidity normal (<code>ingest.py</code>).</span>
+      <span><b>Open-Meteo</b> stands in for humidity while POWER is more than 4 days late.</span>
+    </div>
+  </section>
+
+  <!-- 13 ALERT TO GROUP (Mermaid) -->
+  <section class="slide slide--diagram" id="alerts" aria-label="From Alert to the Telegram group">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">From Alert to the Telegram group</h2>
+      <p class="slide__sub"><code>verifier.py</code>, <code>publication.py</code>, <code>auto_publish.py</code> and the notification modules.</p></div></div>
+    <div class="diagram-row reveal">
+      <section class="diagram-shell">
+        <p class="diagram-shell__hint">Ctrl or Cmd + wheel to zoom, drag to pan, double-click to fit.</p>
+        <div class="mermaid-wrap">
+          <div class="zoom-controls">
+            <button type="button" data-action="zoom-in" title="Zoom in">+</button>
+            <button type="button" data-action="zoom-out" title="Zoom out">&minus;</button>
+            <button type="button" data-action="zoom-fit" title="Fit">&#8634;</button>
+            <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+            <button type="button" data-action="zoom-expand" title="Open full size">&#x26F6;</button>
+            <span class="zoom-label">Loading</span>
+          </div>
+          <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+        </div>
+        <script type="text/plain" class="diagram-source">
+flowchart TD
+  agent["On Alert, or Re-verify:<br/>the Gemini agent reads FIRMS hotspots,<br/>two GIBS images and the weather"] --> verdict{"Verdict"}
+  verdict -->|Confirmed| conf["Waits for an operator,<br/>until 12 h after the slot"]
+  verdict -->|"Needs review, Rejected"| manual["Waits for an operator,<br/>never sent by itself"]
+  conf -->|"nobody in 2 h,<br/>still Alert"| auto["The sweep publishes it,<br/>labelled not reviewed"]
+  conf -->|Publish| tx["One Firestore transaction:<br/>decision, audit, alert"]
+  manual -->|Publish| tx
+  auto --> tx
+  tx --> deliver["One outbox job per linked group,<br/>Cloud Tasks to the private worker"]
+  deliver --> tg["Telegram sendMessage<br/>in the ASAPify group"]
+  class verdict rule
+  class agent ai
+  class conf,manual,tx human
+  class auto auto
+  class deliver gcp
+  class tg ext
+        </script>
+      </section>
+      <aside class="notes" aria-label="Notes">
+        <div class="note k-ai"><b>The agent</b><code>geospatial_analyst</code> calls <code>fetch_firms_data</code>, looks at a true- and a false-colour GIBS image, and answers in YAML. The backend checks its numbers against what the tool returned; a Confirmed without smoke or a burn scar in clear images from the last 24 h becomes Needs review.</div>
+        <div class="note k-human"><b>The decision</b>Publish or reject, in one transaction with the audit entry. A second decision is refused; reject still works after 12 h.</div>
+        <div class="note k-auto"><b>The safety net</b>Every minute the sweep reads only the Alert regions and publishes a Confirmed nobody decided on in 2 hours, as <code>automatic</code>.</div>
+        <div class="note k-gcp"><b>Delivery</b>Ids are fixed and writes are create-only, so a retry never duplicates a job. A timeout becomes <code>unknown</code>, never a blind resend; delivery is not exactly-once.</div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 14 JOBS TABLE -->
+  <section class="slide slide--table" id="jobs" aria-label="Clocks and queues">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">Clocks and queues</h2>
+      <p class="slide__sub">Every scheduled call goes to the private worker <code>asapify-notify</code> with OIDC; nothing on it is public.</p></div></div>
+    <div class="table-wrap reveal"><div class="table-scroll"><table class="data-table">
+      <thead><tr><th>Caller</th><th>When</th><th>Calls</th><th>What happens</th></tr></thead>
+      <tbody>
+        <tr><td><code>asapify-geo-tick</code></td><td>Minutes 5, 20, 35, 50 (UTC)</td><td class="nw"><code>/_internal/engine/geo-tick?budget=240</code></td><td class="wrap">Waiting agent runs, one slot for all 65 regions, then agent runs for new Alerts</td></tr>
+        <tr><td><code>asapify-engine-tick</code></td><td>Every 15 minutes</td><td class="nw"><code>/_internal/engine/tick?batch=20&amp;budget=240</code></td><td class="wrap">NASA POWER's newest hours per region, dryness and the humidity normal</td></tr>
+        <tr><td><code>asapify-notification-recovery</code></td><td>Every minute</td><td class="nw"><code>/_internal/notifications/sweep</code></td><td class="wrap">Settles stuck sends, publishes overdue confirmed alerts, resumes fan-outs, queues pending jobs</td></tr>
+        <tr><td>Queue <code>asapify-notifications</code></td><td>Per alert and group</td><td class="nw"><code>/_internal/notifications/dispatch</code></td><td class="wrap">Claims one job in a transaction and posts it with Telegram sendMessage</td></tr>
+      </tbody></table></div></div>
+  </section>
+
+  <!-- 15 API SURFACE -->
+  <section class="slide" id="api" aria-label="The API, by who may call it">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">The API, by who may call it</h2>
+      <p class="slide__sub">FastAPI in <code>asapify_api/</code>. Errors are <code>{"error": {"code", "message"}}</code>; missing data is <code>DATA_NOT_READY</code>, never Safe.</p></div></div>
+    <div class="cards cards--4 reveal">
+      <section class="card2 top-public"><h3>Everyone</h3><p class="how">No sign-in. Cached by the Hosting CDN.</p><ul>
+        <li><code>GET /api/v1/public/regions</code></li>
+        <li><code>GET /api/v1/public/regions/{id}</code> <span>last 24 h</span></li>
+        <li><code>GET /api/v1/public/days</code>, <code>/days/{date}</code></li>
+        <li><code>GET /api/v1/telegram/join</code> <span>group links</span></li>
+        <li><code>GET /api/v1/health</code></li></ul></section>
+      <section class="card2 top-operator"><h3>Operators</h3><p class="how">Firebase ID token with <code>role=operator</code>; Admin needs an operator someone else added.</p><ul>
+        <li><code>GET /operator/regions</code>, <code>/regions/{id}</code>, <code>/days</code>, <code>/agent</code></li>
+        <li><code>POST /operator/regions/{id}/verify</code> <span>Re-verify</span></li>
+        <li><code>POST /operator/regions/{id}/decision</code></li>
+        <li><code>GET /operator/alerts/{id}/deliveries</code></li>
+        <li><code>/operator/telegram-groups</code>, <code>/operator/access</code> <span>Admin</span></li>
+        <li><code>/access/activate</code>, <code>/access/signup</code> <span>CAPTCHA</span></li></ul></section>
+      <section class="card2 top-webhook"><h3>Telegram</h3><p class="how">Secret header checked in constant time.</p><ul>
+        <li><code>POST /api/v1/notifications/telegram-webhook</code></li>
+        <li><span>Links a group with an operator's one-time code; answers <code>/start</code> and private messages in the response, so the API needs no bot token.</span></li></ul></section>
+      <section class="card2 top-internal"><h3>The worker only</h3><p class="how">OIDC from Cloud Scheduler or Cloud Tasks.</p><ul>
+        <li><code>POST /_internal/engine/geo-tick</code></li>
+        <li><code>POST /_internal/engine/tick</code></li>
+        <li><code>POST /_internal/notifications/dispatch</code></li>
+        <li><code>POST /_internal/notifications/sweep</code></li></ul></section>
+    </div>
+  </section>
+
+  <!-- 16 FIRESTORE -->
+  <section class="slide slide--table" id="firestore" aria-label="What Firestore keeps">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">What Firestore keeps</h2>
+      <p class="slide__sub">One Native-mode database, <code>asapify</code>, in Jakarta. The rules deny every browser; only the services' accounts read and write.</p></div></div>
+    <div class="tables-2 reveal">
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Engine</th><th>Holds</th></tr></thead>
+        <tbody>
+          <tr><td><code>engine_regions</code></td><td class="wrap">One document per region; under it <code>slots</code>, <code>hours</code>, <code>transitions</code>, <code>verifications</code></td></tr>
+          <tr><td><code>engine_days</code></td><td class="wrap">Every rated slot of a WIB day, for the map's day player; at most 1 MiB</td></tr>
+          <tr><td><code>engine_baselines</code></td><td class="wrap">NASA POWER normals of skin temperature and humidity</td></tr>
+          <tr><td><code>engine_meta</code></td><td class="wrap">The last slot, waiting agent runs and the daily agent quota</td></tr>
+        </tbody></table></div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Alerts and access</th><th>Holds</th></tr></thead>
+        <tbody>
+          <tr><td><code>alerts</code></td><td class="wrap">Published alerts, automatic or not, and their fan-out state</td></tr>
+          <tr><td><code>notification_jobs</code></td><td class="wrap">The outbox: one job per alert and group, with its status</td></tr>
+          <tr><td><code>telegram_groups</code></td><td class="wrap">Linked groups: title and invite link; the chat id never leaves the server</td></tr>
+          <tr><td><code>telegram_group_links</code></td><td class="wrap">One-time linking codes, hashed, 10 minutes</td></tr>
+          <tr><td><code>audit_log</code></td><td class="wrap">Every decision and access change</td></tr>
+          <tr><td><code>operator_access</code></td><td class="wrap">Operators added by others, and self-registrations</td></tr>
+        </tbody></table></div>
+    </div>
+  </section>
+
+  <!-- 17 CODE MAP -->
+  <section class="slide" id="be-code" aria-label="Backend code map">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">Backend code map</h2>
+      <p class="slide__sub">One image runs both services; <code>main.py</code> starts the FastAPI app.</p></div></div>
+    <div class="cards cards--3 reveal">
+      <section class="card2"><h3><code>asapify_engine/</code></h3><p class="how">The risk engine: pure Python, Firestore behind <code>repo.py</code>.</p><ul>
+        <li><code>geo.py</code> <span>the 15-minute cycle</span></li>
+        <li><code>satellites.py</code> <span>Himawari-9 and GK2A with satpy</span></li>
+        <li><code>contextual.py</code>, <code>fusion.py</code> <span>anomaly, two views</span></li>
+        <li><code>rules.py</code>, <code>fsm.py</code> <span>fuzzy rules, state machine</span></li>
+        <li><code>ingest.py</code>, <code>power.py</code>, <code>openmeteo.py</code> <span>dryness</span></li>
+        <li><code>firms.py</code>, <code>imagery.py</code>, <code>verifier.py</code> <span>the agent's evidence</span></li></ul></section>
+      <section class="card2"><h3><code>asapify_api/</code> and <code>asapify_agent/</code></h3><p class="how">FastAPI routes and the ADK agent.</p><ul>
+        <li><code>public_routes.py</code> <span>the read-only map</span></li>
+        <li><code>engine_routes.py</code> <span>operators, decisions, ticks</span></li>
+        <li><code>publication.py</code>, <code>auto_publish.py</code> <span>12 h and 2 h rules</span></li>
+        <li><code>notification_*.py</code>, <code>alert_text.py</code> <span>Telegram outbox</span></li>
+        <li><code>access_routes.py</code>, <code>auth.py</code>, <code>captcha.py</code> <span>who may act</span></li>
+        <li><code>asapify_agent/agent.py</code> <span>the Gemini agent</span></li></ul></section>
+      <section class="card2"><h3><code>gcp/</code>, <code>tools/</code>, <code>tests/</code></h3><p class="how">Setting up the cloud, building regions, checking it all offline.</p><ul>
+        <li><code>gcp/cloudshell.py</code> <span>API, worker, queue, sweep</span></li>
+        <li><code>gcp/*-setup.sh</code>, <code>telegram-live.sh</code> <span>engine, agent, bot</span></li>
+        <li><code>gcp/firestore.rules</code> <span>no browser access</span></li>
+        <li><code>tools/build_regions.py</code> <span>65 regions from KHG</span></li>
+        <li><code>tools/backtest_rules.py</code> <span>replay stored slots</span></li>
+        <li><code>tests/</code> <span>pytest with fakes, no network</span></li></ul></section>
+    </div>
+  </section>
+
+  <!-- 18 DIVIDER -->
+  <section class="slide slide--divider" id="d-fe" aria-label="Part 4">
+    <span class="slide__number">04</span>
+    <div><h2 class="slide__heading reveal">Frontend</h2>
+      <p class="slide__lede reveal"><code>ktp-asapify-fe</code>: React 19, Vite and TypeScript, with MapLibre for the map.</p></div>
+  </section>
+
+  <!-- 19 FRONTEND (Mermaid) -->
+  <section class="slide slide--diagram" id="frontend" aria-label="How the web app is put together">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">How the web app is put together</h2>
+      <p class="slide__sub">A single-page app on Firebase Hosting; the heavier pages load only when they are opened.</p></div></div>
+    <div class="diagram-row reveal">
+      <section class="diagram-shell">
+        <p class="diagram-shell__hint">Ctrl or Cmd + wheel to zoom, drag to pan, double-click to fit.</p>
+        <div class="mermaid-wrap">
+          <div class="zoom-controls">
+            <button type="button" data-action="zoom-in" title="Zoom in">+</button>
+            <button type="button" data-action="zoom-out" title="Zoom out">&minus;</button>
+            <button type="button" data-action="zoom-fit" title="Fit">&#8634;</button>
+            <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+            <button type="button" data-action="zoom-expand" title="Open full size">&#x26F6;</button>
+            <span class="zoom-label">Loading</span>
+          </div>
+          <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+        </div>
+        <script type="text/plain" class="diagram-source">
+flowchart TD
+  user["Browser or phone"] --> hosting["Firebase Hosting<br/>dist/ and the CDN"]
+  hosting --> app["App.tsx: routes, theme,<br/>lite mode, motion"]
+  app --> pub["For everyone<br/>Regions map, Region page,<br/>Get alerts, About"]
+  app --> ops["For operators<br/>Admin, API contract, Login"]
+  pub --> map["MapLibre map<br/>OpenFreeMap basemap,<br/>provinces, region marks"]
+  pub --> api["api.ts<br/>/api/v1/public/*"]
+  ops --> auth["auth.ts<br/>Google sign-in,<br/>role=operator claim"]
+  ops --> apiop["api.ts<br/>/api/v1/operator/*<br/>with the ID token"]
+  api --> run["/api/** rewrite<br/>Cloud Run asapify-api"]
+  apiop --> run
+  class user ext
+  class hosting,run gcp
+  class app,pub,ops rule
+  class map,api,apiop,auth human
+        </script>
+      </section>
+      <aside class="notes" aria-label="Notes">
+        <div class="note k-gcp"><b>One origin</b>The app and <code>/api</code> share the Hosting domain, so no CORS and one CDN in front of the public routes.</div>
+        <div class="note k-rule"><b>Pages</b><code>src/pages/</code>: Regions, RegionPage, Join, Admin and ApiContract load when opened; About and Login come with the app.</div>
+        <div class="note k-human"><b>Map</b><code>src/map/</code>: MapLibre 6 with its worker under <code>/maplibre/</code>, OpenFreeMap positron or dark, provinces from geoBoundaries.</div>
+        <div class="note"><b>Contract</b><code>src/types.ts</code> and <code>src/contract/spec.ts</code> mirror the backend; the API contract page shows them.</div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 20 SCREENS -->
+  <section class="slide slide--table" id="screens" aria-label="What each screen is for">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">What each screen is for</h2></div></div>
+    <div class="table-wrap reveal"><div class="table-scroll"><table class="data-table">
+      <thead><tr><th>Screen</th><th>Path</th><th>Who</th><th>Shows and does</th></tr></thead>
+      <tbody>
+        <tr><td>Regions</td><td><code>/</code></td><td>Everyone</td><td class="wrap">The map of 65 regions by status, hot pixels and VIIRS (hover or tap one), the region list and the day player</td></tr>
+        <tr><td>Region page</td><td><code>/regions/:id</code></td><td>Everyone</td><td class="wrap">ΔT, humidity and cloud over time, the dry-air and sun shifts, Fuzzy MAUT, status changes, the Gemini AI Analysis; operators also Re-verify, publish or reject</td></tr>
+        <tr><td>Get alerts</td><td><code>/join</code></td><td>Everyone</td><td class="wrap">Join the ASAPify Telegram group, with the links the backend returns</td></tr>
+        <tr><td>About</td><td><code>/about</code></td><td>Everyone</td><td class="wrap">How it works, statuses, rules, limits and data sources, with diagrams</td></tr>
+        <tr><td>Admin</td><td><code>/admin</code></td><td>Admin</td><td class="wrap">Link Telegram groups and their invite links; add or remove operators</td></tr>
+        <tr><td>API contract</td><td><code>/api-contract</code></td><td>Operators</td><td class="wrap">Every endpoint, schema and error code, with examples</td></tr>
+        <tr><td>Login</td><td><code>/login</code></td><td>Operators</td><td class="wrap">Google sign-in; during judging, a CAPTCHA makes a signed-in account an operator</td></tr>
+      </tbody></table></div></div>
+  </section>
+
+  <!-- 21 LIGHT ON PHONES -->
+  <section class="slide" id="light" aria-label="Light enough for a phone in the field">
+    <div class="content-grid">
+      <div>
+        <h2 class="slide__heading reveal">Light enough for a phone in the field</h2>
+        <ul class="bullets">
+          <li class="reveal"><b>Mobile first.</b> A bottom tab bar, a draggable bottom sheet under 1024 px, 44 px touch targets.</li>
+          <li class="reveal"><b>Lite mode by itself</b> with data saver, little memory, few cores or reduced motion: plain basemap, no camera flights.</li>
+          <li class="reveal"><b>Only the map page loads MapLibre.</b> Every other page stays small.</li>
+          <li class="reveal"><b>Motion that steps aside.</b> The motion library's features load later; reduced motion keeps only fades.</li>
+          <li class="reveal"><b>No third-party fonts.</b> Plus Jakarta Sans and JetBrains Mono ship with the app.</li>
+        </ul>
+      </div>
+      <div class="aside-box reveal">
+        <h3>What the app downloads</h3>
+        <p>Gzipped JavaScript of the production build, 18 October 2026.</p>
+        <div class="bar"><span>Any page</span><i style="width:42%"></i><span class="v">±123 KB</span></div>
+        <div class="bar"><span>Motion core</span><i style="width:6%"></i><span class="v">±17 KB</span></div>
+        <div class="bar"><span>Map page</span><i style="width:100%"></i><span class="v">+±295 KB</span></div>
+        <p>The motion core is part of the 123 KB. The map page adds MapLibre and the map on top of it.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 22 DIVIDER -->
+  <section class="slide slide--divider" id="d-ship" aria-label="Part 5">
+    <span class="slide__number">05</span>
+    <div><h2 class="slide__heading reveal">Shipping</h2>
+      <p class="slide__lede reveal">GitHub Actions to Google Cloud, without a single stored key.</p></div>
+  </section>
+
+  <!-- 23 DEPLOY -->
+  <section class="slide" id="deploy" aria-label="Every merge to main ships itself">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">Every merge to main ships itself</h2>
+      <p class="slide__sub">Both workflows sign in to Google Cloud with Workload Identity Federation, so GitHub holds no service-account key.</p></div></div>
+    <div class="lanes reveal">
+      <div class="lane"><div class="lane__name"><b>Backend</b><span><code>deploy-backend.yml</code>, when API, engine or agent code changes</span></div>
+        <ol class="pipeline">
+          <li class="pipeline__step gh"><div class="pipeline__name">Test</div><div class="pipeline__desc">pytest on Python 3.12</div></li>
+          <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+          <li class="pipeline__step"><div class="pipeline__name">Build the image</div><div class="pipeline__desc">Docker, pushed to Artifact Registry as <code>gh-</code> plus the commit</div></li>
+          <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+          <li class="pipeline__step"><div class="pipeline__name">Roll out</div><div class="pipeline__desc"><code>asapify-api</code> and <code>asapify-notify</code>; settings, IAM and schedules untouched</div></li>
+          <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+          <li class="pipeline__step ok"><div class="pipeline__name">Smoke test</div><div class="pipeline__desc">Health through Hosting; on failure the previous image comes back</div></li>
+        </ol></div>
+      <div class="lane"><div class="lane__name"><b>Frontend</b><span><code>deploy-firebase.yml</code>, for every change but docs</span></div>
+        <ol class="pipeline">
+          <li class="pipeline__step gh"><div class="pipeline__name">Install</div><div class="pipeline__desc"><code>npm ci</code> on Node 24</div></li>
+          <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+          <li class="pipeline__step gh"><div class="pipeline__name">Build</div><div class="pipeline__desc"><code>tsc --noEmit</code> and <code>vite build</code> with the Firebase web config</div></li>
+          <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+          <li class="pipeline__step"><div class="pipeline__name">Release</div><div class="pipeline__desc"><code>firebase-tools</code> deploys Hosting to hack2skill-510921</div></li>
+          <li class="pipeline__arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15m-5-5l5 5-5 5"/></svg></li>
+          <li class="pipeline__step ok"><div class="pipeline__name">Smoke test</div><div class="pipeline__desc">The live bundle matches the build, and the API answers through Hosting</div></li>
+        </ol></div>
+    </div>
+    <div class="deploy-note reveal">
+      <div class="rule3"><b>Infrastructure is separate.</b><span>Queues, schedules, IAM and secrets are set once with the scripts in <code>gcp/</code>, never by a merge.</span></div>
+      <div class="rule3"><b>Notifications start safe.</b><span>A fresh setup runs <code>dry_run</code>; production went <code>live</code> with <code>gcp/telegram-live.sh</code>.</span></div>
+      <div class="rule3"><b>Frozen.</b><span>The tag <code>freeze-2026-10-18</code> marks the final state of both repositories.</span></div>
+    </div>
+  </section>
+
+  <!-- 24 DIVIDER -->
+  <section class="slide slide--divider" id="d-data" aria-label="Part 6">
+    <span class="slide__number">06</span>
+    <div><h2 class="slide__heading reveal">Data</h2>
+      <p class="slide__lede reveal">Public sources, each credited, with where to read more.</p></div>
+  </section>
+
+  <!-- 25 DATA 1 -->
+  <section class="slide slide--table" id="data-1" aria-label="Data sources, satellites and weather">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">Data sources: satellites and weather</h2></div></div>
+    <div class="table-wrap reveal"><div class="table-scroll"><table class="data-table">
+      <thead><tr><th>Source</th><th>What ASAPify takes</th><th>Used in</th><th>Learn more</th></tr></thead>
+      <tbody>
+        <tr><td>Himawari-9 AHI (JMA)</td><td class="wrap">Bands 7 and 13 (3.9 and 10.4 µm), 2 km, every 10 minutes, via NOAA Open Data on AWS</td><td class="nw">Steps 1–3</td><td><a href="https://registry.opendata.aws/noaa-himawari/">AWS registry</a></td></tr>
+        <tr><td>GK2A AMI (KMA)</td><td class="wrap">SW038 and IR105 (3.8 and 10.5 µm), 2 km, every 10 minutes, via NOAA Open Data on AWS</td><td class="nw">Steps 1–3</td><td><a href="https://registry.opendata.aws/noaa-gk2a-pds/">AWS registry</a></td></tr>
+        <tr><td>NASA FIRMS</td><td class="wrap">VIIRS NOAA-20 and NOAA-21 hotspots, 375 m, near real time</td><td class="nw">Steps 3–4</td><td><a href="https://firms.modaps.eosdis.nasa.gov/">FIRMS</a>, <a href="https://firms.modaps.eosdis.nasa.gov/api/">API</a></td></tr>
+        <tr><td>NASA GIBS</td><td class="wrap">Daily VIIRS NOAA-20 true- and false-colour images with thermal anomalies on top</td><td class="nw">Step 4</td><td><a href="https://nasa-gibs.github.io/gibs-api-docs/">GIBS docs</a>, <a href="https://worldview.earthdata.nasa.gov/">Worldview</a></td></tr>
+        <tr><td>NASA POWER</td><td class="wrap">Hourly humidity and skin temperature, 0.5° × 0.625°, about 2–3 days behind; the two-year humidity normal</td><td class="nw">Step 3</td><td><a href="https://power.larc.nasa.gov/">POWER</a>, <a href="https://power.larc.nasa.gov/docs/services/api/">API</a></td></tr>
+        <tr><td>Open-Meteo</td><td class="wrap">Hourly humidity, wind and rain from weather models (CC BY 4.0)</td><td class="nw">Steps 3–4</td><td><a href="https://open-meteo.com/">open-meteo.com</a></td></tr>
+      </tbody></table></div></div>
+  </section>
+
+  <!-- 26 DATA 2 -->
+  <section class="slide slide--table" id="data-2" aria-label="Data sources, maps, AI and delivery">
+    <div class="slide__head reveal"><div><h2 class="slide__heading">Data sources: maps, AI and delivery</h2></div></div>
+    <div class="table-wrap reveal"><div class="table-scroll"><table class="data-table">
+      <thead><tr><th>Source</th><th>What ASAPify takes</th><th>Used in</th><th>Learn more</th></tr></thead>
+      <tbody>
+        <tr><td>KHG peat map (KLHK)</td><td class="wrap">Indicative peat hydrological units: which NASA POWER cells hold at least 25 km² of peat</td><td class="nw">The 65 regions</td><td class="wrap">Shapefile in <code>ktp-asapify-be/tools/khg/</code></td></tr>
+        <tr><td>geoBoundaries IDN ADM1</td><td class="wrap">Province boundaries on the map (ODbL)</td><td class="nw">Map</td><td><a href="https://www.geoboundaries.org/">geoboundaries.org</a></td></tr>
+        <tr><td>OpenFreeMap and OpenStreetMap</td><td class="wrap">The basemap and its labels, no API key</td><td class="nw">Map</td><td><a href="https://openfreemap.org/">OpenFreeMap</a>, <a href="https://www.openstreetmap.org/copyright">© OSM contributors</a></td></tr>
+        <tr><td>Gemini and ADK</td><td class="wrap">Gemini 3.5 Flash on Gemini Enterprise Agent Platform, driven by an Agent Development Kit agent</td><td class="nw">Step 4</td><td><a href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/">Agent Platform</a>, <a href="https://google.github.io/adk-docs/">ADK</a></td></tr>
+        <tr><td>Telegram Bot API</td><td class="wrap">Posting published alerts in the group, and linking groups</td><td class="nw">Step 5</td><td><a href="https://core.telegram.org/bots/api">Bot API</a></td></tr>
+      </tbody></table></div></div>
+  </section>
+
+  <!-- 27 LIMITS -->
+  <section class="slide" id="limits" aria-label="Limits at the freeze">
+    <div class="content-grid">
+      <div>
+        <h2 class="slide__heading reveal">Limits at the freeze</h2>
+        <ul class="bullets">
+          <li class="reveal"><b>Not calibrated.</b> Every threshold is a starting value, checked against VIIRS on one night slot only.</li>
+          <li class="reveal"><b>A 2 km pixel sees large fires.</b> Small or smouldering ones often stay below it, where VIIRS at 375 m still sees them.</li>
+          <li class="reveal"><b>Cloud hides the ground</b> from both satellites; such regions are Not observable, never Safe.</li>
+          <li class="reveal"><b>Not an operational warning system.</b> Latency and reach in the field were never measured; Telegram's "accepted" is not "read".</li>
+          <li class="reveal"><b>Gaps in the archive.</b> A tick rates only the newest slot and never backfills: at most 96 of 144 scans a day.</li>
+        </ul>
+      </div>
+      <div class="aside-box reveal">
+        <h3>What a utility is not</h3>
+        <p>A Fuzzy MAUT utility is a match score, and the agent's confidence is its own score. Neither is a probability of fire.</p>
+        <p>The peat map in use is incomplete, so a fire anywhere in a cell counts, marked on or off mapped peat.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 28 CLOSING -->
+  <section class="slide slide--close" id="close" aria-label="Frozen on 18 October 2026">
+    <h2 class="slide__display reveal">Frozen on 18&nbsp;October&nbsp;2026</h2>
+    <p class="slide__lede reveal" style="margin-top:18px">Development has stopped. Both repositories and their docs describe the system as it runs.</p>
+    <div class="close-links reveal">
+      <div><b>Live app</b><a href="https://hack2skill-510921.web.app">hack2skill-510921.web.app</a></div>
+      <div><b>Frontend</b><span>KRL-TEAM-PROJECT/ktp-asapify-fe</span></div>
+      <div><b>Backend</b><span>KRL-TEAM-PROJECT/ktp-asapify-be</span></div>
+    </div>
+  </section>
+
+</main>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
+
+  const root = document.documentElement;
+  const forced = root.dataset.theme;
+  const isDark = forced ? forced === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+
+  // Colours for classDef lines: Mermaid bakes them into the SVG, so they follow the theme at load time.
+  const C = isDark
+    ? { rule: '#4ADE80', ai: '#94A3B8', human: '#E2E8F0', auto: '#FACC15', gcp: '#7AA7F5', ext: '#94A3B8' }
+    : { rule: '#15803D', ai: '#64748B', human: '#1E293B', auto: '#CA8A04', gcp: '#3B78E7', ext: '#64748B' };
+  const classDefs = Object.entries(C).map(([k, c]) =>
+    `classDef ${k} fill:${c}1f,stroke:${c},stroke-width:2px${k === 'ext' ? ',stroke-dasharray:5 4' : ''}`).join('\n');
+
+  mermaid.initialize({
+    startOnLoad: false, theme: 'base', look: 'classic', securityLevel: 'strict',
+    flowchart: { curve: 'basis', padding: 14, nodeSpacing: 46, rankSpacing: 50, htmlLabels: true, wrappingWidth: 360 },
+    themeVariables: {
+      fontFamily: "'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif", fontSize: '17px',
+      primaryColor: isDark ? '#1E293B' : '#FFFFFF', primaryBorderColor: isDark ? '#64748B' : '#94A3B8',
+      primaryTextColor: isDark ? '#F8FAFC' : '#1E293B', lineColor: isDark ? '#94A3B8' : '#475569',
+      secondaryColor: isDark ? '#26334A' : '#F1F5F9', tertiaryColor: isDark ? '#26334A' : '#F8FAFC',
+      edgeLabelBackground: isDark ? '#1E293B' : '#FFFFFF',
+    },
+  });
+
+  const cfg = { pad: 22, minZoom: 0.1, maxZoom: 5, step: 0.14, maxInitial: 1.6 };
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  let drag = null;
+  addEventListener('mousemove', (e) => drag?.move(e));
+  addEventListener('mouseup', () => { drag?.end(); drag = null; });
+
+  async function initDiagram(shell, index) {
+    const wrap = shell.querySelector('.mermaid-wrap');
+    const viewport = shell.querySelector('.mermaid-viewport');
+    const canvas = shell.querySelector('.mermaid-canvas');
+    const label = shell.querySelector('.zoom-label');
+    const code = shell.querySelector('.diagram-source').textContent.trim() + '\n' + classDefs;
+    let zoom = 1, panX = 0, panY = 0, w = 0, h = 0, mode = 'fit';
+
+    const apply = () => {
+      const svg = canvas.querySelector('svg');
+      if (!svg || !w) return;
+      const vw = viewport.clientWidth, vh = viewport.clientHeight;
+      const rw = w * zoom, rh = h * zoom;
+      panX = rw + cfg.pad * 2 <= vw ? (vw - rw) / 2 : clamp(panX, vw - rw - cfg.pad, cfg.pad);
+      panY = rh + cfg.pad * 2 <= vh ? (vh - rh) / 2 : clamp(panY, vh - rh - cfg.pad, cfg.pad);
+      svg.style.width = rw + 'px';
+      svg.style.height = rh + 'px';
+      canvas.style.transform = `translate(${panX}px, ${panY}px)`;
+      label.textContent = Math.round(zoom * 100) + '% ' + mode;
+    };
+    const fit = () => {
+      if (!w) return;
+      const aw = Math.max(80, viewport.clientWidth - cfg.pad * 2), ah = Math.max(80, viewport.clientHeight - cfg.pad * 2);
+      zoom = clamp(Math.min(aw / w, ah / h), cfg.minZoom, cfg.maxInitial);
+      mode = 'fit';
+      apply();
+    };
+    const around = (f, cx, cy) => {
+      const next = clamp(zoom * f, cfg.minZoom, cfg.maxZoom);
+      panX = cx - (next / zoom) * (cx - panX);
+      panY = cy - (next / zoom) * (cy - panY);
+      zoom = next;
+      mode = '';
+      apply();
+    };
+    const canPan = () => w * zoom + cfg.pad * 2 > viewport.clientWidth || h * zoom + cfg.pad * 2 > viewport.clientHeight;
+    const expand = () => {
+      const svg = canvas.querySelector('svg');
+      if (!svg) return;
+      const clone = svg.cloneNode(true);
+      clone.style.width = ''; clone.style.height = '';
+      const bg = getComputedStyle(root).getPropertyValue('--surface').trim() || '#FFFFFF';
+      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Diagram</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:${bg};padding:32px;box-sizing:border-box;font-family:'Plus Jakarta Sans',system-ui,sans-serif}svg{max-width:100%;max-height:92vh;height:auto}</style></head><body>${clone.outerHTML}</body></html>`;
+      open(URL.createObjectURL(new Blob([html], { type: 'text/html' })), '_blank');
+    };
+
+    try {
+      const { svg } = await mermaid.render('diagram-' + index, code);
+      const parsed = new DOMParser().parseFromString(svg, 'text/html').body.querySelector('svg');
+      if (!parsed) throw new Error('Mermaid produced no SVG');
+      canvas.replaceChildren(document.adoptNode(parsed));
+      const node = canvas.querySelector('svg');
+      const vb = node.viewBox?.baseVal;
+      w = vb && vb.width ? vb.width : parseFloat(node.getAttribute('width')) || 1000;
+      h = vb && vb.height ? vb.height : parseFloat(node.getAttribute('height')) || 700;
+      if (!node.getAttribute('viewBox')) node.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      node.removeAttribute('width'); node.removeAttribute('height');
+      node.style.maxWidth = 'none'; node.style.display = 'block';
+      fit();
+    } catch (err) {
+      console.error('Mermaid render failed:', err);
+      label.textContent = 'Error: ' + (err.message || 'render failed');
+    }
+
+    const actions = { 'zoom-in': () => around(1 + cfg.step, viewport.clientWidth / 2, viewport.clientHeight / 2),
+      'zoom-out': () => around(1 / (1 + cfg.step), viewport.clientWidth / 2, viewport.clientHeight / 2),
+      'zoom-fit': fit, 'zoom-one': () => { zoom = 1; mode = '1:1'; apply(); }, 'zoom-expand': expand };
+    for (const [name, run] of Object.entries(actions)) wrap.querySelector(`[data-action="${name}"]`)?.addEventListener('click', run);
+    viewport.addEventListener('dblclick', fit);
+    viewport.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const r = viewport.getBoundingClientRect();
+        around(e.deltaY < 0 ? 1 + cfg.step : 1 / (1 + cfg.step), e.clientX - r.left, e.clientY - r.top);
+      } else if (canPan()) { e.preventDefault(); panX -= e.deltaX; panY -= e.deltaY; apply(); }
+    }, { passive: false });
+    viewport.addEventListener('mousedown', (e) => {
+      if (!canPan()) return;
+      wrap.classList.add('is-panning');
+      const sx = e.clientX, sy = e.clientY, px = panX, py = panY;
+      e.preventDefault();
+      drag = { move: (ev) => { panX = px + ev.clientX - sx; panY = py + ev.clientY - sy; apply(); }, end: () => wrap.classList.remove('is-panning') };
+    });
+    let tx = 0, ty = 0, tpx = 0, tpy = 0, dist = 0, cx = 0, cy = 0;
+    viewport.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) { tx = e.touches[0].clientX; ty = e.touches[0].clientY; tpx = panX; tpy = panY; }
+      else if (e.touches.length === 2) {
+        const [a, b] = e.touches, r = viewport.getBoundingClientRect();
+        dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        cx = (a.clientX + b.clientX) / 2 - r.left; cy = (a.clientY + b.clientY) / 2 - r.top;
+      }
+    }, { passive: true });
+    viewport.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && canPan()) {
+        e.preventDefault(); panX = tpx + e.touches[0].clientX - tx; panY = tpy + e.touches[0].clientY - ty; apply();
+      } else if (e.touches.length === 2 && dist > 0) {
+        e.preventDefault();
+        const [a, b] = e.touches, d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        around(d / dist, cx, cy); dist = d;
+      }
+    }, { passive: false });
+    new ResizeObserver(() => { if (w && mode === 'fit') fit(); }).observe(wrap);
+  }
+
+  await Promise.all([...document.querySelectorAll('.diagram-shell')].map(initDiagram));
+  root.dataset.ready = '1';
+</script>
+
+<script>
+  // SlideEngine: keyboard, wheel-free touch swipe, dots, counter, prev/next buttons and a progress bar.
+  function SlideEngine() {
+    this.deck = document.querySelector('.deck');
+    this.slides = [].slice.call(document.querySelectorAll('.slide'));
+    this.current = 0;
+    this.total = this.slides.length;
+    this.buildChrome();
+    this.bindEvents();
+    this.observe();
+    this.update();
+  }
+  SlideEngine.prototype.buildChrome = function () {
+    var self = this;
+    var bar = document.createElement('div'); bar.className = 'deck-progress'; document.body.appendChild(bar); this.bar = bar;
+    var dots = document.createElement('nav'); dots.className = 'deck-dots'; dots.setAttribute('aria-label', 'Slides');
+    this.slides.forEach(function (s, i) {
+      var d = document.createElement('button'); d.className = 'deck-dot'; d.type = 'button';
+      d.title = (i + 1) + '. ' + (s.getAttribute('aria-label') || 'Slide');
+      d.setAttribute('aria-label', d.title);
+      d.onclick = function () { self.goTo(i); };
+      dots.appendChild(d);
+    });
+    document.body.appendChild(dots); this.dots = [].slice.call(dots.children);
+    var nav = document.createElement('div'); nav.className = 'deck-nav';
+    nav.innerHTML = '<button type="button" aria-label="Previous slide">&#8592;</button><button type="button" aria-label="Next slide">&#8594;</button>';
+    document.body.appendChild(nav);
+    this.prevBtn = nav.children[0]; this.nextBtn = nav.children[1];
+    this.prevBtn.onclick = function () { self.prev(); }; this.nextBtn.onclick = function () { self.next(); };
+    var ctr = document.createElement('div'); ctr.className = 'deck-counter'; ctr.setAttribute('aria-live', 'polite'); document.body.appendChild(ctr); this.counter = ctr;
+    var hints = document.createElement('div'); hints.className = 'deck-hints'; hints.textContent = 'Arrow keys, space or swipe to move between slides';
+    document.body.appendChild(hints); this.hints = hints;
+    this.hintTimer = setTimeout(function () { hints.classList.add('faded'); }, 4000);
+  };
+  SlideEngine.prototype.bindEvents = function () {
+    var self = this;
+    document.addEventListener('keydown', function (e) {
+      if (e.target.closest && e.target.closest('.mermaid-wrap, .table-scroll, input, textarea, [contenteditable]')) return;
+      if (['ArrowDown', 'ArrowRight', ' ', 'PageDown'].indexOf(e.key) > -1) { e.preventDefault(); self.next(); }
+      else if (['ArrowUp', 'ArrowLeft', 'PageUp'].indexOf(e.key) > -1) { e.preventDefault(); self.prev(); }
+      else if (e.key === 'Home') { e.preventDefault(); self.goTo(0); }
+      else if (e.key === 'End') { e.preventDefault(); self.goTo(self.total - 1); }
+      self.fadeHints();
+    });
+  };
+  SlideEngine.prototype.observe = function () {
+    var self = this;
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) { entry.target.classList.add('visible'); self.current = self.slides.indexOf(entry.target); self.update(); }
+      });
+    }, { threshold: 0.5 });
+    this.slides.forEach(function (s) { obs.observe(s); });
+  };
+  SlideEngine.prototype.goTo = function (i) { this.slides[Math.max(0, Math.min(i, this.total - 1))].scrollIntoView({ behavior: 'smooth' }); };
+  SlideEngine.prototype.next = function () { if (this.current < this.total - 1) this.goTo(this.current + 1); };
+  SlideEngine.prototype.prev = function () { if (this.current > 0) this.goTo(this.current - 1); };
+  SlideEngine.prototype.update = function () {
+    var c = this.current;
+    this.bar.style.width = ((c + 1) / this.total * 100) + '%';
+    this.dots.forEach(function (d, i) { d.classList.toggle('active', i === c); if (i === c) d.setAttribute('aria-current', 'step'); else d.removeAttribute('aria-current'); });
+    this.counter.textContent = (c + 1) + ' / ' + this.total;
+    this.prevBtn.disabled = c === 0; this.nextBtn.disabled = c === this.total - 1;
+  };
+  SlideEngine.prototype.fadeHints = function () { clearTimeout(this.hintTimer); this.hints.classList.add('faded'); };
+  if (!document.documentElement.classList.contains('export')) window.__deck = new SlideEngine();
+  // Mermaid comes from a CDN: without a network the slides still work and the diagram boxes say why.
+  setTimeout(function () {
+    if (!document.documentElement.dataset.ready) {
+      document.querySelectorAll('.zoom-label').forEach(function (l) { l.textContent = 'This diagram needs a network connection'; });
+    }
+  }, 9000);
+</script>
+</body>
+</html>

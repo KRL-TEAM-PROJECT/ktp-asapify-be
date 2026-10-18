@@ -40,7 +40,7 @@ If you wrote `pipeline/`, this page tells you where each piece went and what cha
    ΔBT anomaly is also ≥ 3 K. The 3.9 µm test is the MODIS/VIIRS T4 test: thin cirrus raises ΔBT by cooling 10.4 µm,
    a fire warms 3.9 µm. `delta_t_k` for the rules is the anomaly of the strongest fire-like pixel (0 when there is
    none), so a noisy background cannot reach WARNING on its own. Night streaks and a per-pixel history are not used
-   (left undone at the freeze, 16 October 2026).
+   (left undone at the freeze, 18 October 2026).
 4. **Two satellites overlap on purpose** (`fusion.py`). Himawari-9 (140.7° E) and GK2A (128.2° E) see the same peat
    from different angles, so when one is under cloud the other still sees. ΔT is the mean of the satellites that see
    the region, each weighted by the clear share of its view: both count when both see, neither decides alone, and
