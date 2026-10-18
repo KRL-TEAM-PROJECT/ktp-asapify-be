@@ -14,8 +14,8 @@ The runner handles the API, worker, queue, indexes and the recovery scheduler, a
 - 13 Oct: automatic deployment is active (see "Automatic deployment" below); first run deployed `gh-dfc52e1`.
   Firestore rules released (no direct browser access).
 - 16 Oct, submission: the engine fills the map every 10 minutes, Telegram is live and published alerts reach the
-  linked group. The GCS data bucket stays empty: no code uses it. Both services run `gh-f40381a` (tag
-  `freeze-2026-10-16`). Artifact Registry keeps the latest 3 images and deletes older ones after 7 days.
+  linked group. The GCS data bucket stays empty: no code uses it. Both services ran `gh-f40381a`. Artifact
+  Registry keeps the latest 3 images and deletes older ones after 7 days.
 - 16 Oct, after the submission tag: adaptive fuzzy curves, the visual check and the 15-minute cycle. The deploy that
   brings them needs `gcp/geo-setup.sh` rerun with `APPLY=1`, so the geo tick runs every 15 minutes.
 - 17 Oct: the strongest view as a second Fuzzy MAUT attribute, the place, time and map link in every Telegram alert,

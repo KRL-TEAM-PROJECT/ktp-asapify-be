@@ -4,9 +4,8 @@ Risk engine and operator API for the `KRL-TEAM-PROJECT/ktp-asapify-fe` frontend,
 
 > **Frozen on 18 October 2026.** Development has stopped; this repository and its docs describe the system as it
 > stands. Only fixes that keep the deployed service running belong here. Known limitations are listed below.
-> The tag `freeze-2026-10-18` marks the final state of `main`; `freeze-2026-10-16` marks the state submitted on
-> 16 October (live image `gh-f40381a` then). What changed between the two is listed in
-> [CLOUDSHELL.md](docs/CLOUDSHELL.md).
+> The tag `freeze-2026-10-18` marks the final state of `main`. The 16 October submission ran the image
+> `gh-f40381a`; what changed after it is listed in [CLOUDSHELL.md](docs/CLOUDSHELL.md).
 
 ## How it works
 
